@@ -7,7 +7,7 @@ use gtk::{gdk, gio, glib, prelude::*};
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 
 use crate::app::{COLUMNS, Message, Retry, State, Workers};
-use crate::config::{Action, Config, Key, KeyChord, Modifiers};
+use crate::config::{Action, Appearance, Config, Key, KeyChord, Modifiers, Theme};
 use crate::preview::Animation;
 
 struct AnimatedTile {
@@ -130,7 +130,7 @@ impl Picker {
         root.append(&footer);
         window.set_child(Some(&root));
         let css = gtk::CssProvider::new();
-        css.load_from_data(include_str!("picker.css"));
+        css.load_from_data(&appearance_css(&config.appearance));
         gtk::style_context_add_provider_for_display(
             &WidgetExt::display(&window),
             &css,
@@ -495,6 +495,24 @@ impl Picker {
             }
         }
     }
+}
+
+fn appearance_css(appearance: &Appearance) -> String {
+    let (background, foreground, accent, error) = match appearance.theme {
+        Theme::Dark => ("#252629", "#f1f1f1", "#83b8ff", "#ff958e"),
+        Theme::Light => ("#f6f7f8", "#202227", "#3974cf", "#aa3030"),
+        Theme::System => (
+            "@theme_bg_color",
+            "@theme_fg_color",
+            "@accent_color",
+            "@error_color",
+        ),
+    };
+    format!(
+        "@define-color gloob_bg {background};\n@define-color gloob_panel alpha({background}, {});\n@define-color gloob_fg {foreground};\n@define-color gloob_accent {accent};\n@define-color gloob_error {error};\n{}",
+        appearance.background_opacity,
+        include_str!("picker.css")
+    )
 }
 
 fn footer_activation(input: Option<KeyChord>, footer_focused: bool) -> bool {

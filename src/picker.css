@@ -1,23 +1,37 @@
-/* keep the desktop's light/dark palette; let the gifs provide the color. */
+/* opacity belongs to the panel background, not the widgets or gif textures. */
 window.gloob {
-    background: @theme_bg_color;
-    color: @theme_fg_color;
-    border: 1px solid alpha(@theme_fg_color, 0.12);
+    background: @gloob_panel;
+    color: @gloob_fg;
+    border: 1px solid alpha(@gloob_fg, 0.12);
     border-radius: 18px;
 }
 
 .gloob .search-field {
     min-height: 44px;
     padding: 0 12px;
-    background: alpha(@theme_fg_color, 0.045);
-    border: 1px solid alpha(@theme_fg_color, 0.09);
+    background: alpha(@gloob_fg, 0.045);
+    border: 1px solid alpha(@gloob_fg, 0.09);
     border-radius: 12px;
     box-shadow: none;
     font-size: 16px;
+    color: @gloob_fg;
+}
+
+.gloob .search-field text {
+    color: @gloob_fg;
+    background: transparent;
+}
+
+.gloob .search-field image {
+    color: @gloob_fg;
+}
+
+.gloob scrollbar slider {
+    background: alpha(@gloob_fg, 0.2);
 }
 
 .gloob .search-field:focus-within {
-    border-color: alpha(@accent_color, 0.65);
+    border-color: alpha(@gloob_accent, 0.65);
     box-shadow: none;
 }
 
@@ -25,7 +39,7 @@ window.gloob {
     padding: 3px;
     min-width: 0;
     min-height: 0;
-    background: alpha(@theme_fg_color, 0.025);
+    background: alpha(@gloob_fg, 0.025);
     background-image: none;
     border: 2px solid transparent;
     border-radius: 12px;
@@ -35,12 +49,12 @@ window.gloob {
 }
 
 .gloob .gif-tile:hover {
-    background: alpha(@theme_fg_color, 0.07);
+    background: alpha(@gloob_fg, 0.07);
 }
 
 .gloob .gif-tile.selected {
-    border-color: @accent_color;
-    background: alpha(@accent_color, 0.08);
+    border-color: @gloob_accent;
+    background: alpha(@gloob_accent, 0.08);
 }
 
 .gloob .gif-tile:disabled {
@@ -49,7 +63,7 @@ window.gloob {
 
 .gloob .preview-placeholder {
     font-size: 11px;
-    opacity: 0.55;
+    color: mix(@gloob_fg, @gloob_bg, 0.45);
 }
 
 .gloob .footer {
@@ -58,23 +72,24 @@ window.gloob {
 }
 
 .gloob .footer .status {
-    opacity: 0.6;
+    color: mix(@gloob_fg, @gloob_bg, 0.4);
 }
 
 .gloob .footer .status.error {
     opacity: 1;
-    color: @error_color;
+    color: @gloob_error;
 }
 
 .gloob .footer .shortcuts {
-    opacity: 0.45;
+    color: mix(@gloob_fg, @gloob_bg, 0.5);
 }
 
 .gloob .retry {
     min-height: 22px;
     padding: 2px 8px;
     border-radius: 7px;
-    background: alpha(@theme_fg_color, 0.06);
+    background: alpha(@gloob_fg, 0.06);
+    color: @gloob_fg;
     border: 0;
     box-shadow: none;
 }

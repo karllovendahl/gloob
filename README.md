@@ -56,6 +56,16 @@ see [`examples/config.toml`](examples/config.toml) for defaults. `[keybindings]`
 
 these are in-app bindings, not compositor hotkeys. there is no gui configuration editor.
 
+appearance defaults to a charcoal panel at 95% background opacity:
+
+```toml
+[appearance]
+theme = "dark"
+background_opacity = 0.95
+```
+
+`theme` supports `dark`, `light`, and `system`. dark/light use gloob's fixed palettes regardless of the desktop setting; system uses the gtk theme's colors. `background_opacity` is a finite number from 0.0 to 1.0; 1.0 is solid. only the panel background is transparent, not gif textures, text, or the selection ring. opacity does not enable blur, which depends on compositor support. arbitrary css themes are not supported.
+
 ## provider
 
 gifjif search and media retrieval live in `src/provider.rs`. search uses `sort=top`, requests 24 results, and passes pagination cursors through unchanged. an empty query uses the feed. the provider is public and requires no account or api key; search text is sent directly to gifjif. see [gifjif's developer documentation](https://gifjif.com/developers).

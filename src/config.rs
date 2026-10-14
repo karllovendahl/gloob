@@ -113,9 +113,35 @@ impl FromStr for KeyChord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    System,
+    Light,
+    #[default]
+    Dark,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Appearance {
+    pub theme: Theme,
+    pub background_opacity: f64,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            theme: Theme::Dark,
+            background_opacity: 0.95,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     keybindings: BTreeMap<Action, Vec<KeyChord>>,
+    pub appearance: Appearance,
 }
 
 impl Default for Config {
@@ -124,6 +150,7 @@ impl Default for Config {
             "ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l", "enter", "escape", "ctrl+n",
         ];
         Self {
+            appearance: Appearance::default(),
             keybindings: Action::ALL
                 .into_iter()
                 .zip(keys)
@@ -137,6 +164,7 @@ impl Default for Config {
 #[serde(default, deny_unknown_fields)]
 struct FileConfig {
     keybindings: FileBindings,
+    appearance: Appearance,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -197,7 +225,15 @@ impl Config {
             raw.keybindings.close,
             raw.keybindings.next_page,
         ];
-        let mut config = Self::default();
+        ensure!(
+            raw.appearance.background_opacity.is_finite()
+                && (0.0..=1.0).contains(&raw.appearance.background_opacity),
+            "background_opacity must be a finite number between 0 and 1"
+        );
+        let mut config = Self {
+            appearance: raw.appearance,
+            ..Self::default()
+        };
         for (action, keys) in Action::ALL.into_iter().zip(overrides) {
             if let Some(keys) = keys {
                 ensure!(
@@ -287,6 +323,43 @@ mod tests {
             config.bindings(Action::Close),
             Config::default().bindings(Action::Close)
         );
+    }
+
+    #[test]
+    fn appearance_defaults_and_partial_overrides_are_validated() {
+        let config = Config::from_toml("").unwrap();
+        assert_eq!(config.appearance.theme, Theme::Dark);
+        assert_eq!(config.appearance.background_opacity, 0.95);
+        for (theme, expected) in [
+            ("system", Theme::System),
+            ("light", Theme::Light),
+            ("dark", Theme::Dark),
+        ] {
+            let config = Config::from_toml(&format!("[appearance]\ntheme='{theme}'")).unwrap();
+            assert_eq!(config.appearance.theme, expected);
+            assert_eq!(config.appearance.background_opacity, 0.95);
+            assert_eq!(
+                config.bindings(Action::NextPage),
+                Config::default().bindings(Action::NextPage)
+            );
+        }
+        let config = Config::from_toml("[appearance]\nbackground_opacity=1.0").unwrap();
+        assert_eq!(config.appearance.theme, Theme::Dark);
+        assert_eq!(config.appearance.background_opacity, 1.0);
+        for text in [
+            "theme='custom'",
+            "background_opacity=-0.1",
+            "background_opacity=1.1",
+            "background_opacity=nan",
+            "background_opacity=inf",
+            "background_opacity='0.95'",
+            "unknown=true",
+        ] {
+            assert!(
+                Config::from_toml(&format!("[appearance]\n{text}")).is_err(),
+                "{text}"
+            );
+        }
     }
 
     #[test]

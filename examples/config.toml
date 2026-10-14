@@ -6,6 +6,11 @@
 # navigation without ctrl/alt only accepts arrows (including shift+arrows).
 # every action needs at least one key; no chord may appear more than once.
 
+# opacity only affects the panel background, not gifs or text.
+[appearance]
+theme = "dark" # system, light, or dark
+background_opacity = 0.95 # 0.0 to 1.0; use 1.0 for a solid panel
+
 [keybindings]
 move_left = ["ctrl+h"]
 move_down = ["ctrl+j"]
