@@ -38,8 +38,12 @@ fn cached_asset_survives_source_removal_and_is_reused_by_content() {
     let cache = root.path().join("cache");
     let first = cache_gif(&source, &cache).unwrap();
     let old_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
-    fs::File::options().write(true).open(first.path()).unwrap()
-        .set_times(FileTimes::new().set_modified(old_time)).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(first.path())
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old_time))
+        .unwrap();
     let before = fs::metadata(first.path()).unwrap();
     let renamed = root.path().join("different-name.gif");
     fs::rename(&source, &renamed).unwrap();
@@ -58,7 +62,11 @@ fn rejects_bad_assets_without_creating_cache_entries() {
     let root = TempDir::new().unwrap();
     let cache = root.path().join("cache");
     let path = root.path().join("bad.gif");
-    for bytes in [b"not a gif".to_vec(), b"GIF89a;".to_vec(), gif_bytes()[..20].to_vec()] {
+    for bytes in [
+        b"not a gif".to_vec(),
+        b"GIF89a;".to_vec(),
+        gif_bytes()[..20].to_vec(),
+    ] {
         fs::write(&path, bytes).unwrap();
         assert!(cache_gif(&path, &cache).is_err());
         assert!(!cache.exists());
@@ -142,7 +150,10 @@ fn rejects_truncated_later_frame_without_publishing_earlier_frames() {
     let cache = root.path().join("cache");
     let mut bytes = gif_without_lzw_end_code(2, 1, false);
     let first_frame = gif_without_lzw_end_code(1, 1, false);
-    bytes.splice(19..19, first_frame[19..first_frame.len() - 1].iter().copied());
+    bytes.splice(
+        19..19,
+        first_frame[19..first_frame.len() - 1].iter().copied(),
+    );
     fs::write(&path, bytes).unwrap();
     let error = cache_gif(&path, &cache).err().unwrap();
     assert!(format!("{error:#}").contains("image truncated"));
@@ -165,7 +176,8 @@ fn rejects_huge_logical_canvas_even_with_small_frames() {
 fn uniform_gif(width: u16, height: u16, frames: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
     {
-        let mut encoder = gif::Encoder::new(&mut bytes, width, height, &[0, 0, 0, 255, 255, 255]).unwrap();
+        let mut encoder =
+            gif::Encoder::new(&mut bytes, width, height, &[0, 0, 0, 255, 255, 255]).unwrap();
         let mut frame = gif::Frame {
             width,
             height,
@@ -216,12 +228,26 @@ fn copy_command(root: &Path, path: &Path, helper: Option<&str>) -> Output {
 fn hands_encoded_file_uri_to_helper_and_exits_successfully() {
     let root = TempDir::new().unwrap();
     let source = source(root.path());
-    let output = copy_command(root.path(), &source, Some("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE/args\"\n/bin/cat > \"$CAPTURE/uri\"\n"));
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(fs::read_to_string(root.path().join("args")).unwrap(), "--type\ntext/uri-list\n");
+    let output = copy_command(
+        root.path(),
+        &source,
+        Some("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE/args\"\n/bin/cat > \"$CAPTURE/uri\"\n"),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("args")).unwrap(),
+        "--type\ntext/uri-list\n"
+    );
     let payload = fs::read_to_string(root.path().join("uri")).unwrap();
     assert!(payload.ends_with("\r\n"));
-    let path = Url::parse(payload.trim_end()).unwrap().to_file_path().unwrap();
+    let path = Url::parse(payload.trim_end())
+        .unwrap()
+        .to_file_path()
+        .unwrap();
     assert!(path.starts_with(root.path().join("cache space ü #/gloob/gifs")));
     fs::remove_file(source).unwrap();
     assert_eq!(fs::read(path).unwrap(), gif_bytes());
@@ -237,6 +263,66 @@ fn reports_failed_or_missing_helper_without_claiming_success() {
         assert!(output.stdout.is_empty());
         assert!(String::from_utf8_lossy(&output.stderr).contains("wl-copy"));
     }
+}
+
+#[test]
+fn prunes_only_after_success_and_keeps_reselected_assets() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("source.gif");
+    let mut assets = Vec::new();
+    let helper = "#!/bin/sh\n/bin/cat > \"$CAPTURE/uri\"\n";
+    for index in 0..11u8 {
+        let mut bytes = gif_bytes();
+        bytes.pop();
+        bytes.extend_from_slice(&[0x21, 0xfe, 1, index, 0, 0x3b]);
+        fs::write(&path, bytes).unwrap();
+        let output = copy_command(root.path(), &path, Some(helper));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assets.push(
+            Url::parse(fs::read_to_string(root.path().join("uri")).unwrap().trim())
+                .unwrap()
+                .to_file_path()
+                .unwrap(),
+        );
+    }
+    assert!(!assets[0].exists());
+    assert!(assets[1..].iter().all(|asset| asset.exists()));
+    let directory = assets[10].parent().unwrap();
+    let before = fs::read(directory.join(".recency.json")).unwrap();
+    let mut bytes = gif_bytes();
+    bytes.pop();
+    bytes.extend_from_slice(&[0x21, 0xfe, 1, 99, 0, 0x3b]);
+    fs::write(&path, bytes).unwrap();
+    assert!(
+        !copy_command(root.path(), &path, Some("#!/bin/sh\nexit 7\n"))
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(directory.join(".recency.json")).unwrap(), before);
+    assert!(assets[1..].iter().all(|asset| asset.exists()));
+    fs::copy(&assets[1], &path).unwrap();
+    assert!(
+        copy_command(root.path(), &path, Some(helper))
+            .status
+            .success()
+    );
+    assert!(assets[1].exists());
+    // the unselected asset left by the failed copy is removed at the next successful copy.
+    assert_eq!(
+        fs::read_dir(directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "gif"))
+            .count(),
+        10
+    );
 }
 
 #[test]

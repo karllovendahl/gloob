@@ -31,13 +31,24 @@ fn resolve_cache_dir(xdg: Option<OsString>, home: Option<OsString>) -> Result<Pa
         return Ok(PathBuf::from(base).join("gloob/gifs"));
     }
     let home = home.context("set home or an absolute xdg_cache_home to locate the cache")?;
-    ensure!(Path::new(&home).is_absolute(), "home must be an absolute path");
+    ensure!(
+        Path::new(&home).is_absolute(),
+        "home must be an absolute path"
+    );
     Ok(PathBuf::from(home).join(".cache/gloob/gifs"))
 }
 
 pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedGif> {
     let bytes = read_bounded(source)?;
-    validate_gif(&bytes)?;
+    cache_bytes(&bytes, directory)
+}
+
+pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedGif> {
+    ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "gif exceeds the 25 mib size limit"
+    );
+    validate_gif(bytes)?;
 
     DirBuilder::new()
         .recursive(true)
@@ -47,19 +58,22 @@ pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedGif> {
     let directory = directory
         .canonicalize()
         .context("could not resolve the gif cache")?;
-    let path = directory.join(format!("{:x}.gif", Sha256::digest(&bytes)));
+    let path = directory.join(format!("{:x}.gif", Sha256::digest(bytes)));
     let mut temporary =
         tempfile::NamedTempFile::new_in(&directory).context("could not create a cached gif")?;
     temporary
-        .write_all(&bytes)
+        .write_all(bytes)
         .context("could not write the cached gif")?;
-    temporary.flush().context("could not flush the cached gif")?;
+    temporary
+        .flush()
+        .context("could not flush the cached gif")?;
 
     // publish only complete files; never replace an asset another paste may be reading.
     match temporary.persist_noclobber(&path) {
         Ok(_) => {}
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(&path).context("could not inspect the cached gif")?;
+            let metadata =
+                fs::symlink_metadata(&path).context("could not inspect the cached gif")?;
             ensure!(
                 metadata.file_type().is_file(),
                 "cached gif is not a regular file"
@@ -75,7 +89,7 @@ pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedGif> {
     Ok(CachedGif { path })
 }
 
-fn read_bounded(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded(path: &Path) -> Result<Vec<u8>> {
     let metadata =
         fs::metadata(path).with_context(|| format!("could not inspect {}", path.display()))?;
     ensure!(metadata.is_file(), "gif must be a regular file");
@@ -97,7 +111,11 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn validate_gif(bytes: &[u8]) -> Result<()> {
+pub(crate) fn validate_gif(bytes: &[u8]) -> Result<()> {
+    ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "gif exceeds the 25 mib size limit"
+    );
     ensure!(
         bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
         "file is not a gif"

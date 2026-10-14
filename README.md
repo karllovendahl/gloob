@@ -39,7 +39,9 @@ validated gifs go in `$XDG_CACHE_HOME/gloob/gifs`, falling back to `~/.cache/glo
 
 gloob hands a percent-encoded `file://` uri to `wl-copy` as `text/uri-list`. wl-copy forks a background clipboard owner, so gloob can exit without dropping the selection. the helper serves subsequent paste requests until the selection is replaced or the session ends. gloob itself does not stay running.
 
-the file must remain available because the clipboard refers to its path. do not clear the cache before pasting. there is no automatic eviction yet, and deleting the original source does not remove the cached copy.
+the file must remain available because the clipboard refers to its path. do not clear the cache before pasting. after a successful copy, gloob retains the ten most recently selected gifs, using a separate atomic recency index so reselecting does not rewrite gif bytes. failed clipboard publication neither advances recency nor removes previous selections. cleanup keeps the newly selected file and ignores unrelated filenames and symlinks. concurrent gloob copies serialize publication and cleanup with a cache lock; cleanup failures warn without claiming the successful copy failed. deleting the original source does not remove the cached copy.
+
+this is a ten-file cache, not clipboard history. older file references can stop working after later selections evict them; the current selection remains available. previews never enter this cache.
 
 files are limited to 25 mib. validation decodes frames with bounded memory and total decoding work. complete frames are accepted without an lzw end code because some real-world gifs omit it. truncated pixel data, malformed frames, and files without a gif trailer are still rejected before publication. cache files are written atomically; an existing damaged asset produces an error rather than silently replacing a file another paste might be reading.
 

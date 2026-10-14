@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
-use gloob::{clipboard, media};
+use gloob::cache;
 
 const HELP: &str = "gloob
 
@@ -19,8 +19,9 @@ fn run(mut args: impl Iterator<Item = OsString>) -> Result<()> {
             Ok(())
         }
         (Some(command), Some(path), None) if command == "copy" => {
-            let asset = media::cache_gif(Path::new(&path), &media::cache_dir()?)?;
-            clipboard::publish(&asset)?;
+            if let Some(warning) = cache::copy_path(Path::new(&path))? {
+                eprintln!("gloob: {warning}");
+            }
             println!("copied gif");
             Ok(())
         }
