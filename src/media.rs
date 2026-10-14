@@ -108,7 +108,8 @@ fn validate_gif(bytes: &[u8]) -> Result<()> {
         MAX_FRAME_PIXELS.try_into().unwrap(),
     ));
     options.check_frame_consistency(true);
-    options.check_lzw_end_code(true);
+    // tolerate missing lzw end codes; frame decoding still requires every declared pixel.
+    options.check_lzw_end_code(false);
     let mut decoder = options.read_info(bytes).context("invalid gif header")?;
     ensure!(
         decoder.width() > 0 && decoder.height() > 0,

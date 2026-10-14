@@ -27,7 +27,7 @@ gloob hands a percent-encoded `file://` uri to `wl-copy` as `text/uri-list`. wl-
 
 the file must remain available because the clipboard refers to its path. do not clear the cache before pasting. there is no automatic eviction yet, and deleting the original source does not remove the cached copy.
 
-files are limited to 25 mib. validation decodes frames with bounded memory and total decoding work. incomplete or invalid assets are rejected before publication. cache files are written atomically; an existing damaged asset produces an error rather than silently replacing a file another paste might be reading.
+files are limited to 25 mib. validation decodes frames with bounded memory and total decoding work. complete frames are accepted without an lzw end code because some real-world gifs omit it. truncated pixel data, malformed frames, and files without a gif trailer are still rejected before publication. cache files are written atomically; an existing damaged asset produces an error rather than silently replacing a file another paste might be reading.
 
 ## checks
 

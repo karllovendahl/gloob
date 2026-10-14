@@ -94,20 +94,58 @@ fn refuses_damaged_or_symlinked_cached_assets() {
     assert_eq!(fs::read(source).unwrap(), gif_bytes());
 }
 
+fn gif_without_lzw_end_code(width: u16, height: u16, interlaced: bool) -> Vec<u8> {
+    let mut bytes = b"GIF89a".to_vec();
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.extend_from_slice(&[0x80, 0, 0, 0, 0, 0, 255, 255, 255]);
+    bytes.extend_from_slice(&[0x2c, 0, 0, 0, 0]);
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.push(if interlaced { 0x40 } else { 0 });
+    // three-bit codes, least significant bit first: clear (4), one pixel (0), no end (5).
+    bytes.extend_from_slice(&[2, 1, 0x04, 0, 0x3b]);
+    bytes
+}
+
+#[test]
+fn accepts_complete_image_data_without_lzw_end_code() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("complete.gif");
+    let bytes = gif_without_lzw_end_code(1, 1, false);
+    fs::write(&path, &bytes).unwrap();
+    let cached = cache_gif(&path, &root.path().join("cache")).unwrap();
+    assert_eq!(fs::read(cached.path()).unwrap(), bytes);
+}
+
 #[test]
 fn rejects_incomplete_image_data_even_with_a_trailer() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("incomplete.gif");
-    let bytes = [
-        b'G', b'I', b'F', b'8', b'9', b'a', 1, 0, 1, 0, 0x80, 0, 0,
-        0, 0, 0, 255, 255, 255,
-        0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0,
-        2, 1, 0x04, 0, 0x3b,
-    ];
-    fs::write(&path, bytes).unwrap();
     let cache = root.path().join("cache");
+    for bytes in [
+        gif_without_lzw_end_code(2, 1, false),
+        gif_without_lzw_end_code(1, 2, true),
+    ] {
+        // each frame requires two pixels, but its compressed data supplies only one.
+        fs::write(&path, bytes).unwrap();
+        let error = cache_gif(&path, &cache).err().unwrap();
+        assert!(format!("{error:#}").contains("image truncated"));
+        assert!(!cache.exists());
+    }
+}
+
+#[test]
+fn rejects_truncated_later_frame_without_publishing_earlier_frames() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("incomplete-animation.gif");
+    let cache = root.path().join("cache");
+    let mut bytes = gif_without_lzw_end_code(2, 1, false);
+    let first_frame = gif_without_lzw_end_code(1, 1, false);
+    bytes.splice(19..19, first_frame[19..first_frame.len() - 1].iter().copied());
+    fs::write(&path, bytes).unwrap();
     let error = cache_gif(&path, &cache).err().unwrap();
-    assert!(error.to_string().contains("invalid gif frame"));
+    assert!(format!("{error:#}").contains("image truncated"));
     assert!(!cache.exists());
 }
 
