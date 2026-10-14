@@ -1,0 +1,12 @@
+[package]
+name = "gloob"
+version = "0.1.0"
+edition = "2024"
+description = "a small gif picker for wayland"
+
+[dependencies]
+anyhow = "1"
+gif = "0.13"
+sha2 = "0.10"
+tempfile = "3"
+url = "2"
