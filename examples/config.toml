@@ -13,6 +13,7 @@ move_up = ["ctrl+k"]
 move_right = ["ctrl+l"]
 select = ["enter"]
 close = ["escape"]
+next_page = ["ctrl+n"]
 
 # for arrow navigation, replace an action's list, for example:
 # move_left = ["ctrl+h", "left"]

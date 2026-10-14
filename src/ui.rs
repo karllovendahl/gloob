@@ -30,7 +30,6 @@ struct Picker {
     grid: gtk::Grid,
     scroll: gtk::ScrolledWindow,
     status: gtk::Label,
-    next: gtk::Button,
     retry: gtk::Button,
     state: State,
     workers: Workers,
@@ -77,27 +76,30 @@ impl Picker {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("gloob")
-            .default_width(740)
-            .default_height(580)
+            .default_width(760)
+            .default_height(530)
             .resizable(false)
             .build();
         window.init_layer_shell();
         window.set_namespace(Some("gloob"));
         window.set_layer(Layer::Overlay);
         window.set_keyboard_mode(KeyboardMode::Exclusive);
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        root.set_margin_top(16);
-        root.set_margin_bottom(16);
-        root.set_margin_start(16);
-        root.set_margin_end(16);
+        window.add_css_class("gloob");
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.set_margin_top(20);
+        root.set_margin_bottom(14);
+        root.set_margin_start(20);
+        root.set_margin_end(20);
         let search = gtk::SearchEntry::builder()
             .placeholder_text("search gifs")
             .hexpand(true)
             .build();
+        search.add_css_class("search-field");
+        search.set_margin_bottom(16);
         root.append(&search);
         let grid = gtk::Grid::builder()
-            .column_spacing(8)
-            .row_spacing(8)
+            .column_spacing(10)
+            .row_spacing(10)
             .column_homogeneous(true)
             .build();
         let scroll = gtk::ScrolledWindow::builder()
@@ -106,28 +108,29 @@ impl Picker {
             .child(&grid)
             .build();
         root.append(&scroll);
-        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        footer.add_css_class("footer");
         let status = gtk::Label::builder()
             .label("loading gifs…")
             .xalign(0.0)
             .hexpand(true)
             .wrap(true)
             .build();
+        status.add_css_class("status");
         let retry = gtk::Button::with_label("retry");
+        retry.add_css_class("retry");
         retry.set_visible(false);
-        let next = gtk::Button::with_label("next page");
-        next.set_sensitive(false);
+        let hint = gtk::Label::new(Some(&binding_hint(&config)));
+        hint.add_css_class("shortcuts");
+        hint.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        hint.set_tooltip_text(Some(&binding_hint(&config)));
         footer.append(&status);
         footer.append(&retry);
-        footer.append(&next);
+        footer.append(&hint);
         root.append(&footer);
-        let hint = gtk::Label::new(Some(&binding_hint(&config)));
-        hint.set_wrap(true);
-        hint.add_css_class("dim-label");
-        root.append(&hint);
         window.set_child(Some(&root));
         let css = gtk::CssProvider::new();
-        css.load_from_data("window { border-radius: 12px; } button.gif-tile { padding: 4px; border: 2px solid transparent; } button.gif-tile.selected { border-color: @accent_color; background: alpha(@accent_color, 0.12); }");
+        css.load_from_data(include_str!("picker.css"));
         gtk::style_context_add_provider_for_display(
             &WidgetExt::display(&window),
             &css,
@@ -139,7 +142,6 @@ impl Picker {
             grid,
             scroll,
             status,
-            next: next.clone(),
             retry: retry.clone(),
             state: State::default(),
             workers,
@@ -176,7 +178,7 @@ impl Picker {
             let input = chord(key, modifiers);
             {
                 let picker = picker.borrow();
-                if footer_activation(input, picker.next.has_focus() || picker.retry.has_focus()) {
+                if footer_activation(input, picker.retry.has_focus()) {
                     return glib::Propagation::Proceed;
                 }
             }
@@ -189,18 +191,6 @@ impl Picker {
             }
         });
         window.add_controller(controller);
-        let weak = Rc::downgrade(&picker);
-        next.connect_clicked(move |_| {
-            if let Some(picker) = weak.upgrade() {
-                let mut picker = picker.borrow_mut();
-                if picker.state.loading || picker.state.copying {
-                    return;
-                }
-                if let Some(cursor) = picker.state.cursor.clone() {
-                    picker.start_search(Some(cursor));
-                }
-            }
-        });
         let weak = Rc::downgrade(&picker);
         retry.connect_clicked(move |_| {
             if let Some(picker) = weak.upgrade() {
@@ -261,6 +251,11 @@ impl Picker {
 
     fn action(&mut self, action: Action) {
         match action {
+            Action::NextPage => {
+                if let Some(cursor) = self.state.next_page_cursor() {
+                    self.start_search(Some(cursor));
+                }
+            }
             Action::Close => {
                 if self.state.copying {
                     return;
@@ -323,9 +318,11 @@ impl Picker {
         self.status.set_text(&text);
         self.retry
             .set_visible(self.state.error.is_some() && !self.state.copying);
-        self.next.set_sensitive(
-            self.state.cursor.is_some() && !self.state.loading && !self.state.copying,
-        );
+        if self.state.error.is_some() {
+            self.status.add_css_class("error");
+        } else {
+            self.status.remove_css_class("error");
+        }
         for tile in &self.tiles {
             tile.button.set_sensitive(!self.state.copying);
         }
@@ -338,28 +335,23 @@ impl Picker {
             let gif = this.state.items[index].clone();
             let picture = gtk::Picture::builder()
                 .width_request(160)
-                .height_request(120)
+                .height_request(132)
                 .can_shrink(true)
-                .build();
-            let title = gtk::Label::builder()
-                .label(&gif.title)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .max_width_chars(18)
                 .build();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
             let preview = gtk::Overlay::new();
             preview.set_child(Some(&picture));
             let placeholder = gtk::Label::new(Some("loading…"));
-            placeholder.add_css_class("dim-label");
+            placeholder.add_css_class("preview-placeholder");
             preview.add_overlay(&placeholder);
             content.append(&preview);
-            content.append(&title);
             let button = gtk::Button::builder()
                 .child(&content)
                 .focusable(false)
                 .tooltip_text(format!("{}\n{}", gif.title, gif.page_url))
                 .build();
             button.add_css_class("gif-tile");
+            button.update_property(&[gtk::accessible::Property::Label(&gif.title)]);
             let weak = Rc::downgrade(picker);
             button.connect_clicked(move |_| {
                 if let Some(picker) = weak.upgrade() {
@@ -537,16 +529,38 @@ fn binding_hint(config: &Config) -> String {
         });
         text
     }
-    let movements = [
+    let movement = [
         Action::MoveLeft,
         Action::MoveDown,
         Action::MoveUp,
         Action::MoveRight,
     ]
-    .map(|action| display(config.bindings(action)[0]))
-    .join("/");
+    .map(|action| config.bindings(action)[0]);
+    let ctrl_letters = movement.iter().all(|chord| {
+        chord.modifiers
+            == Modifiers {
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }
+            && matches!(chord.key, Key::Character(_))
+    });
+    let movement = if ctrl_letters {
+        format!(
+            "ctrl+{}",
+            movement
+                .map(|chord| match chord.key {
+                    Key::Character(key) => key.to_string(),
+                    _ => unreachable!(),
+                })
+                .join("/")
+        )
+    } else {
+        movement.map(display).join("/")
+    };
     format!(
-        "type to search · {movements} to move · {} to copy · {} to close",
+        "{movement} move · {} next · {} copy · {} close",
+        display(config.bindings(Action::NextPage)[0]),
         display(config.bindings(Action::Select)[0]),
         display(config.bindings(Action::Close)[0])
     )
@@ -617,7 +631,15 @@ mod tests {
         );
         assert!(chord(gdk::Key::h, ctrl | gdk::ModifierType::SUPER_MASK).is_none());
         let custom = Config::from_toml("[keybindings]\nclose=['ctrl+q']").unwrap();
-        assert!(binding_hint(&custom).contains("ctrl+q to close"));
+        assert!(binding_hint(&custom).contains("ctrl+q close"));
+        assert!(binding_hint(&custom).contains("ctrl+n next"));
+        assert!(binding_hint(&custom).contains("ctrl+h/j/k/l move"));
+        let pagination = Config::from_toml("[keybindings]\nnext_page=['alt+n']").unwrap();
+        assert!(binding_hint(&pagination).contains("alt+n next"));
+        assert_eq!(
+            pagination.action_for(chord(gdk::Key::n, gdk::ModifierType::ALT_MASK).unwrap()),
+            Some(Action::NextPage)
+        );
         assert!(!binding_hint(&custom).contains("escape"));
     }
 }

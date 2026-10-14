@@ -97,6 +97,13 @@ impl State {
         };
     }
 
+    pub fn next_page_cursor(&self) -> Option<String> {
+        if self.loading || self.copying {
+            return None;
+        }
+        self.cursor.clone()
+    }
+
     pub fn fail_copy(&mut self, error: anyhow::Error) {
         self.copying = false;
         self.error = Some(format!("{error:#}"));
@@ -266,6 +273,22 @@ mod tests {
         assert!(!state.accept_page(old, Err(anyhow::anyhow!("late error"))));
         assert_eq!(state.items[0].id, "2");
         assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn next_page_requires_a_cursor_and_an_idle_picker() {
+        let mut state = State::default();
+        assert!(state.next_page_cursor().is_none());
+        state.cursor = Some("page-two".into());
+        assert_eq!(state.next_page_cursor().as_deref(), Some("page-two"));
+        state.loading = true;
+        assert!(state.next_page_cursor().is_none());
+        state.loading = false;
+        state.copying = true;
+        assert!(state.next_page_cursor().is_none());
+        state.copying = false;
+        state.change_query("different query".into());
+        assert!(state.next_page_cursor().is_none());
     }
 
     #[test]

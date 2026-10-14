@@ -4,7 +4,7 @@ a small, single-shot gif picker for wayland. search gifjif, move through animate
 
 ## requirements
 
-- gtk4 and gtk4-layer-shell runtime libraries
+- gtk4 4.10 or newer and gtk4-layer-shell runtime libraries
 - wl-clipboard (`wl-copy`)
 - an active wayland session with layer-shell and clipboard support; initial target is sway
 - internet access for search and gif downloads
@@ -34,7 +34,7 @@ cargo build --locked
 ./target/debug/gloob copy /path/to/reaction.gif
 ```
 
-type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected original, then exits. escape closes without copying. mouse clicks also select and copy. the next-page button loads another bounded page; tab navigates controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
+type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected original, then exits. escape closes without copying. mouse clicks also select and copy. ctrl+n loads the next bounded page when available; it is ignored while loading or copying. titles stay in tooltips and accessibility labels so the grid stays image-only. tab navigates the remaining controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
 
 previews load near the visible rows with four bounded workers, and only visible tiles animate. each preview retains at most 48 downsampled frames, preserving the total playback duration; selected originals are never re-encoded or resized. search is debounced, old search/preview results are discarded, and a separate copy worker prevents preview downloads from holding up selection. empty search uses the feed.
 
@@ -52,7 +52,7 @@ gloob does not edit compositor configs. a keybinding launches a fresh picker; no
 
 picker keybindings use `$XDG_CONFIG_HOME/gloob/config.toml`, or `~/.config/gloob/config.toml` when xdg_config_home is unset, empty, or relative. missing default files use built-in defaults. an explicitly requested config must exist; symlinks are supported. use `--config <path>` to choose another file.
 
-see [`examples/config.toml`](examples/config.toml) for defaults. `[keybindings]` supports `move_left`, `move_down`, `move_up`, `move_right`, `select`, and `close`, each with a nonempty array of chords. override only what you need. default movement is ctrl+h/j/k/l; enter selects and escape closes. modifiers are ctrl, alt, and shift; named keys include arrows, enter, escape, tab, space, and plus. printable shortcuts require ctrl or alt so ordinary search typing remains available. unmodified navigation is limited to arrows. duplicate bindings and unknown fields are errors rather than silently ignored typos.
+see [`examples/config.toml`](examples/config.toml) for defaults. `[keybindings]` supports `move_left`, `move_down`, `move_up`, `move_right`, `select`, `close`, and `next_page`, each with a nonempty array of chords. override only what you need. default movement is ctrl+h/j/k/l; enter selects, escape closes, and ctrl+n loads the next page. modifiers are ctrl, alt, and shift; named keys include arrows, enter, escape, tab, space, and plus. printable shortcuts require ctrl or alt so ordinary search typing remains available. unmodified navigation is limited to arrows. duplicate bindings and unknown fields are errors rather than silently ignored typos. if an existing config uses ctrl+n for another action, explicitly remap `next_page` too, for example `next_page = ["alt+n"]`; defaults do not silently take over an existing shortcut.
 
 these are in-app bindings, not compositor hotkeys. there is no gui configuration editor.
 

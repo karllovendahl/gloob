@@ -1,0 +1,80 @@
+/* keep the desktop's light/dark palette; let the gifs provide the color. */
+window.gloob {
+    background: @theme_bg_color;
+    color: @theme_fg_color;
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+    border-radius: 18px;
+}
+
+.gloob .search-field {
+    min-height: 44px;
+    padding: 0 12px;
+    background: alpha(@theme_fg_color, 0.045);
+    border: 1px solid alpha(@theme_fg_color, 0.09);
+    border-radius: 12px;
+    box-shadow: none;
+    font-size: 16px;
+}
+
+.gloob .search-field:focus-within {
+    border-color: alpha(@accent_color, 0.65);
+    box-shadow: none;
+}
+
+.gloob .gif-tile {
+    padding: 3px;
+    min-width: 0;
+    min-height: 0;
+    background: alpha(@theme_fg_color, 0.025);
+    background-image: none;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    box-shadow: none;
+    outline: none;
+    transition: border-color 100ms ease, background-color 100ms ease;
+}
+
+.gloob .gif-tile:hover {
+    background: alpha(@theme_fg_color, 0.07);
+}
+
+.gloob .gif-tile.selected {
+    border-color: @accent_color;
+    background: alpha(@accent_color, 0.08);
+}
+
+.gloob .gif-tile:disabled {
+    opacity: 0.55;
+}
+
+.gloob .preview-placeholder {
+    font-size: 11px;
+    opacity: 0.55;
+}
+
+.gloob .footer {
+    padding-top: 14px;
+    font-size: 11px;
+}
+
+.gloob .footer .status {
+    opacity: 0.6;
+}
+
+.gloob .footer .status.error {
+    opacity: 1;
+    color: @error_color;
+}
+
+.gloob .footer .shortcuts {
+    opacity: 0.45;
+}
+
+.gloob .retry {
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: 7px;
+    background: alpha(@theme_fg_color, 0.06);
+    border: 0;
+    box-shadow: none;
+}

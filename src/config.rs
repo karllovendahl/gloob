@@ -20,16 +20,18 @@ pub enum Action {
     MoveRight,
     Select,
     Close,
+    NextPage,
 }
 
 impl Action {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::MoveLeft,
         Self::MoveDown,
         Self::MoveUp,
         Self::MoveRight,
         Self::Select,
         Self::Close,
+        Self::NextPage,
     ];
 
     fn is_navigation(self) -> bool {
@@ -118,7 +120,9 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let keys = ["ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l", "enter", "escape"];
+        let keys = [
+            "ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l", "enter", "escape", "ctrl+n",
+        ];
         Self {
             keybindings: Action::ALL
                 .into_iter()
@@ -144,6 +148,7 @@ struct FileBindings {
     move_right: Option<Vec<String>>,
     select: Option<Vec<String>>,
     close: Option<Vec<String>>,
+    next_page: Option<Vec<String>>,
 }
 
 impl Config {
@@ -190,6 +195,7 @@ impl Config {
             raw.keybindings.move_right,
             raw.keybindings.select,
             raw.keybindings.close,
+            raw.keybindings.next_page,
         ];
         let mut config = Self::default();
         for (action, keys) in Action::ALL.into_iter().zip(overrides) {
@@ -260,10 +266,9 @@ mod tests {
     fn defaults_and_empty_config_agree() {
         let config = Config::from_toml("").unwrap();
         assert_eq!(config, Config::default());
-        for (action, key) in Action::ALL
-            .into_iter()
-            .zip(["ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l", "enter", "escape"])
-        {
+        for (action, key) in Action::ALL.into_iter().zip([
+            "ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l", "enter", "escape", "ctrl+n",
+        ]) {
             assert_eq!(config.action_for(key.parse().unwrap()), Some(action));
         }
         assert_eq!(config.action_for("h".parse().unwrap()), None);
@@ -282,6 +287,18 @@ mod tests {
             config.bindings(Action::Close),
             Config::default().bindings(Action::Close)
         );
+    }
+
+    #[test]
+    fn next_page_can_be_overridden_without_stealing_search_input() {
+        let config = Config::from_toml("[keybindings]\nnext_page=['alt+n']").unwrap();
+        assert_eq!(
+            config.action_for("alt+n".parse().unwrap()),
+            Some(Action::NextPage)
+        );
+        assert_eq!(config.action_for("ctrl+n".parse().unwrap()), None);
+        assert!(Config::from_toml("[keybindings]\nnext_page=['ctrl+j']").is_err());
+        assert!(Config::from_toml("[keybindings]\nnext_page=['n']").is_err());
     }
 
     #[test]
@@ -316,7 +333,7 @@ mod tests {
             let text = format!("[keybindings]\nmove_left = {binding}");
             assert!(Config::from_toml(&text).is_err(), "{text}");
         }
-        for action in ["select", "close"] {
+        for action in ["select", "close", "next_page"] {
             assert!(Config::from_toml(&format!("[keybindings]\n{action} = []")).is_err());
             assert!(Config::from_toml(&format!("[keybindings]\n{action} = ['x']")).is_err());
         }
