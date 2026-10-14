@@ -104,6 +104,8 @@ impl Picker {
             .build();
         let scroll = gtk::ScrolledWindow::builder()
             .vexpand(true)
+            // reserve a gutter instead of drawing the scrollbar over the last column.
+            .overlay_scrolling(false)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .child(&grid)
             .build();
