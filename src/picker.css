@@ -13,6 +13,7 @@ window.gloob {
     border: 1px solid alpha(@gloob_fg, 0.09);
     border-radius: 12px;
     box-shadow: none;
+    outline: none;
     font-size: 16px;
     color: @gloob_fg;
 }
@@ -20,26 +21,59 @@ window.gloob {
 .gloob .search-field text {
     color: @gloob_fg;
     background: transparent;
+    outline: none;
+    box-shadow: none;
+}
+
+.gloob .search-field text selection {
+    color: @gloob_bg;
+    background: @gloob_fg;
 }
 
 .gloob .search-field image {
     color: @gloob_fg;
 }
 
+.gloob scrollbar,
+.gloob scrollbar trough {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    min-width: 6px;
+}
+
+.gloob scrollbar.vertical {
+    margin-left: 6px;
+}
+
 .gloob scrollbar slider {
-    background: alpha(@gloob_fg, 0.2);
+    min-width: 4px;
+    min-height: 24px;
+    margin: 0 1px;
+    border: none;
+    border-radius: 3px;
+    background: mix(@gloob_fg, @gloob_bg, 0.72);
+    box-shadow: none;
+    outline: none;
+}
+
+.gloob scrollbar slider:hover {
+    background: mix(@gloob_fg, @gloob_bg, 0.55);
 }
 
 .gloob .search-field:focus-within {
-    border-color: alpha(@gloob_accent, 0.65);
+    border-color: alpha(@gloob_fg, 0.25);
     box-shadow: none;
+    outline: none;
 }
 
 .gloob .gif-tile {
     padding: 3px;
     min-width: 0;
     min-height: 0;
-    background: alpha(@gloob_fg, 0.025);
+    background: transparent;
     background-image: none;
     border: 2px solid transparent;
     border-radius: 12px;
@@ -49,12 +83,12 @@ window.gloob {
 }
 
 .gloob .gif-tile:hover {
-    background: alpha(@gloob_fg, 0.07);
+    background: alpha(@gloob_fg, 0.045);
 }
 
 .gloob .gif-tile.selected {
-    border-color: @gloob_accent;
-    background: alpha(@gloob_accent, 0.08);
+    border-color: mix(@gloob_fg, @gloob_bg, 0.15);
+    background: alpha(@gloob_fg, 0.035);
 }
 
 .gloob .gif-tile:disabled {
@@ -92,4 +126,9 @@ window.gloob {
     color: @gloob_fg;
     border: 0;
     box-shadow: none;
+}
+
+.gloob .retry:focus-visible {
+    outline: 1px solid mix(@gloob_fg, @gloob_bg, 0.35);
+    outline-offset: 2px;
 }

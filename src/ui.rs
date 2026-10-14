@@ -498,18 +498,13 @@ impl Picker {
 }
 
 fn appearance_css(appearance: &Appearance) -> String {
-    let (background, foreground, accent, error) = match appearance.theme {
-        Theme::Dark => ("#252629", "#f1f1f1", "#83b8ff", "#ff958e"),
-        Theme::Light => ("#f6f7f8", "#202227", "#3974cf", "#aa3030"),
-        Theme::System => (
-            "@theme_bg_color",
-            "@theme_fg_color",
-            "@accent_color",
-            "@error_color",
-        ),
+    let (background, foreground, error) = match appearance.theme {
+        Theme::Dark => ("#252629", "#f1f1f1", "#ff958e"),
+        Theme::Light => ("#f6f7f8", "#202227", "#aa3030"),
+        Theme::System => ("@theme_bg_color", "@theme_fg_color", "@error_color"),
     };
     format!(
-        "@define-color gloob_bg {background};\n@define-color gloob_panel alpha({background}, {});\n@define-color gloob_fg {foreground};\n@define-color gloob_accent {accent};\n@define-color gloob_error {error};\n{}",
+        "@define-color gloob_bg {background};\n@define-color gloob_panel alpha({background}, {});\n@define-color gloob_fg {foreground};\n@define-color gloob_error {error};\n{}",
         appearance.background_opacity,
         include_str!("picker.css")
     )
