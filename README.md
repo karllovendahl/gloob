@@ -19,6 +19,12 @@ cargo build --locked
 
 the command copies a file reference, not a url or a still image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client; slack and discord compatibility is not yet verified.
 
+## provider
+
+gifjif search and media retrieval live in `src/provider.rs`. search uses `sort=top`, requests 24 results, and passes pagination cursors through unchanged. an empty query uses the feed. the provider is public and requires no account or api key; search text is sent directly to gifjif. see [gifjif's developer documentation](https://gifjif.com/developers).
+
+requests have connection and total timeouts, no automatic redirects or retries, and explicit byte limits: 2 mib for responses/previews and 25 mib for original gifs. media urls must use https on gifjif's domain. downloaded originals still go through the full gif validator before caching or copying. rate-limit errors preserve a numeric retry-after value when supplied.
+
 ## clipboard and cache
 
 validated gifs go in `$XDG_CACHE_HOME/gloob/gifs`, falling back to `~/.cache/gloob/gifs` when the variable is unset, empty, or relative. filenames use a sha256 content hash so moving or renaming a source does not create another cached copy.
