@@ -6,7 +6,7 @@ use anyhow::{Result, ensure};
 use gtk::{gdk, gio, glib, prelude::*};
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 
-use crate::app::{COLUMNS, Message, State, Workers};
+use crate::app::{COLUMNS, Message, Retry, State, Workers};
 use crate::config::{Action, Config, Key, KeyChord, Modifiers};
 use crate::preview::Animation;
 
@@ -173,8 +173,14 @@ impl Picker {
             let Some(picker) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            let action =
-                chord(key, modifiers).and_then(|chord| picker.borrow().config.action_for(chord));
+            let input = chord(key, modifiers);
+            {
+                let picker = picker.borrow();
+                if footer_activation(input, picker.next.has_focus() || picker.retry.has_focus()) {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            let action = input.and_then(|chord| picker.borrow().config.action_for(chord));
             if let Some(action) = action {
                 picker.borrow_mut().action(action);
                 glib::Propagation::Stop
@@ -198,7 +204,12 @@ impl Picker {
         let weak = Rc::downgrade(&picker);
         retry.connect_clicked(move |_| {
             if let Some(picker) = weak.upgrade() {
-                picker.borrow_mut().start_search(None);
+                let mut picker = picker.borrow_mut();
+                match picker.state.retry.clone() {
+                    Some(Retry::Copy) => picker.action(Action::Select),
+                    Some(Retry::Search(cursor)) => picker.start_search(cursor),
+                    None => {}
+                }
             }
         });
         // the source owns the picker, but not vice versa. it drops all animation state when unmapped.
@@ -231,6 +242,8 @@ impl Picker {
         self.state.generation += 1;
         self.state.loading = true;
         self.state.error = None;
+        self.state.retry = None;
+        self.state.requested_cursor = cursor.clone();
         self.state.items.clear();
         self.state.cursor = None;
         self.clear_tiles();
@@ -241,6 +254,7 @@ impl Picker {
         {
             self.state.loading = false;
             self.state.error = Some(error.to_string());
+            self.state.retry = Some(Retry::Search(self.state.requested_cursor.clone()));
         }
         self.update_status();
     }
@@ -259,8 +273,7 @@ impl Picker {
                 }
                 if let Some(gif) = self.state.begin_copy() {
                     if let Err(error) = self.workers.copy(gif) {
-                        self.state.copying = false;
-                        self.state.error = Some(error.to_string());
+                        self.state.fail_copy(error);
                     }
                     self.search.set_sensitive(!self.state.copying);
                     self.update_status();
@@ -438,8 +451,7 @@ impl Picker {
                             this.window.close();
                         }
                         Err(error) => {
-                            this.state.copying = false;
-                            this.state.error = Some(format!("{error:#}"));
+                            this.state.fail_copy(error);
                             this.search.set_sensitive(true);
                             this.search.grab_focus();
                             this.update_status();
@@ -491,6 +503,13 @@ impl Picker {
             }
         }
     }
+}
+
+fn footer_activation(input: Option<KeyChord>, footer_focused: bool) -> bool {
+    footer_focused
+        && input.is_some_and(|chord| {
+            chord.modifiers == Modifiers::default() && matches!(chord.key, Key::Enter | Key::Space)
+        })
 }
 
 fn binding_hint(config: &Config) -> String {
@@ -565,6 +584,16 @@ fn chord(key: gdk::Key, state: gdk::ModifierType) -> Option<KeyChord> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn footer_enter_and_space_activate_the_focused_control_not_the_gif() {
+        let enter = Some("enter".parse().unwrap());
+        assert!(footer_activation(enter, true));
+        assert!(!footer_activation(enter, false));
+        assert!(footer_activation(Some("space".parse().unwrap()), true));
+        assert!(!footer_activation(Some("ctrl+j".parse().unwrap()), true));
+        assert!(!footer_activation(Some("escape".parse().unwrap()), true));
+    }
 
     #[test]
     fn key_adapter_resolves_actions_without_consuming_normal_typing() {

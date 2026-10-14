@@ -326,6 +326,69 @@ fn prunes_only_after_success_and_keeps_reselected_assets() {
 }
 
 #[test]
+fn cleanup_failure_warns_but_copy_succeeds_and_preserves_the_file() {
+    let root = TempDir::new().unwrap();
+    let source = source(root.path());
+    let directory = root.path().join("cache space ü #/gloob/gifs");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join(".recency.json"), "invalid index").unwrap();
+    let output = copy_command(
+        root.path(),
+        &source,
+        Some("#!/bin/sh\n/bin/cat > \"$CAPTURE/uri\"\n"),
+    );
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cleanup failed"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("copied gif"));
+    let path = Url::parse(fs::read_to_string(root.path().join("uri")).unwrap().trim())
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    assert_eq!(fs::read(path).unwrap(), gif_bytes());
+}
+
+#[test]
+fn concurrent_copies_serialize_publication_and_pruning() {
+    let root = TempDir::new().unwrap();
+    let source = source(root.path());
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let helper = bin.join("wl-copy");
+    fs::write(&helper, "#!/bin/sh\n/bin/cat > \"$CAPTURE/uri-$NAME\"\nprintf started > \"$CAPTURE/started-$NAME\"\nif [ \"$NAME\" = first ]; then\n while [ ! -f \"$CAPTURE/release\" ]; do /bin/sleep 0.02; done\nfi\n").unwrap();
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+    let spawn = |name| {
+        Command::new(env!("CARGO_BIN_EXE_gloob"))
+            .args(["copy".as_ref(), source.as_os_str()])
+            .env("PATH", &bin)
+            .env("XDG_CACHE_HOME", root.path().join("cache"))
+            .env("WAYLAND_DISPLAY", "test-wayland")
+            .env("XDG_RUNTIME_DIR", root.path())
+            .env("CAPTURE", root.path())
+            .env("NAME", name)
+            .spawn()
+            .unwrap()
+    };
+    let mut first = spawn("first");
+    let started = std::time::Instant::now();
+    while !root.path().join("started-first").exists() && started.elapsed().as_secs() < 5 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(root.path().join("started-first").exists());
+    let mut second = spawn("second");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let serialized =
+        !root.path().join("started-second").exists() && second.try_wait().unwrap().is_none();
+    fs::write(root.path().join("release"), "release").unwrap();
+    assert!(first.wait().unwrap().success());
+    assert!(second.wait().unwrap().success());
+    assert!(
+        serialized,
+        "second publication started while first still held the clipboard/cache transaction"
+    );
+    assert!(root.path().join("started-second").exists());
+}
+
+#[test]
 fn requires_wayland_session_for_publication() {
     let root = TempDir::new().unwrap();
     let source = source(root.path());

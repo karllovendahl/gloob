@@ -93,16 +93,21 @@ mod tests {
     use super::*;
 
     fn animation(frames: usize) -> Vec<u8> {
+        sized_animation(2, 1, frames)
+    }
+
+    fn sized_animation(width: u16, height: u16, frames: usize) -> Vec<u8> {
         let mut bytes = Vec::new();
         {
             let mut encoder =
-                gif::Encoder::new(&mut bytes, 2, 1, &[0, 0, 0, 255, 255, 255]).unwrap();
+                gif::Encoder::new(&mut bytes, width, height, &[0, 0, 0, 255, 255, 255]).unwrap();
             for index in 0..frames {
                 let frame = gif::Frame {
-                    width: 2,
-                    height: 1,
+                    width,
+                    height,
                     delay: 10,
-                    buffer: vec![(index % 2) as u8, 1].into(),
+                    buffer: vec![(index % 2) as u8; usize::from(width) * usize::from(height)]
+                        .into(),
                     ..Default::default()
                 };
                 encoder.write_frame(&frame).unwrap();
@@ -126,6 +131,34 @@ mod tests {
         let decoded = decode(&animation(2)).unwrap();
         assert_ne!(decoded.frames[0].rgba, decoded.frames[1].rgba);
         assert_eq!(decoded.frames[0].rgba.len(), 8);
+    }
+
+    #[test]
+    fn downsampling_and_decoding_limits_apply_before_retaining_frames() {
+        let animation = decode(&sized_animation(320, 240, 2)).unwrap();
+        assert_eq!((animation.width, animation.height), (160, 120));
+        assert_eq!(animation.frames[0].rgba.len(), 160 * 120 * 4);
+        assert!(
+            decode(&sized_animation(1, 1, 501))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("decoding limit")
+        );
+        assert!(
+            decode(&sized_animation(1000, 1000, 41))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("decoding limit")
+        );
+        assert!(
+            decode(&vec![0; 2 * 1024 * 1024 + 1])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("file limit")
+        );
     }
 
     #[test]

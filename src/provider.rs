@@ -208,6 +208,15 @@ mod tests {
     use std::sync::mpsc;
 
     fn server(status: &str, headers: &str, body: Vec<u8>) -> (GifJif, mpsc::Receiver<String>) {
+        response_server(status, headers, body, true)
+    }
+
+    fn response_server(
+        status: &str,
+        headers: &str,
+        body: Vec<u8>,
+        known_length: bool,
+    ) -> (GifJif, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("localhost:0").unwrap();
         let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
         let (send, receive) = mpsc::channel();
@@ -228,8 +237,12 @@ mod tests {
             let _ = send.send(request);
             write!(
                 stream,
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n",
-                body.len()
+                "HTTP/1.1 {status}\r\n{}Connection: close\r\n{headers}\r\n",
+                if known_length {
+                    format!("Content-Length: {}\r\n", body.len())
+                } else {
+                    String::new()
+                }
             )
             .unwrap();
             let _ = stream.write_all(&body);
@@ -309,6 +322,16 @@ mod tests {
                 .to_string()
                 .contains("503")
         );
+    }
+
+    #[test]
+    fn bounds_unknown_length_streams_before_parsing() {
+        let (api, _request) =
+            response_server("200 OK", "", vec![0; API_LIMIT_BYTES as usize + 1], false);
+        let error = api.search("hello", None).unwrap_err();
+        assert!(error.to_string().contains("size limit"), "{error:#}");
+        let (api, _request) = response_server("200 OK", "", page(), false);
+        assert_eq!(api.search("hello", None).unwrap().items.len(), 1);
     }
 
     #[test]

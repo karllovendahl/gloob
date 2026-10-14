@@ -16,6 +16,12 @@ use crate::{
 
 pub const COLUMNS: usize = 4;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Retry {
+    Search(Option<String>),
+    Copy,
+}
+
 #[derive(Default)]
 pub struct State {
     pub generation: u64,
@@ -26,6 +32,8 @@ pub struct State {
     pub loading: bool,
     pub copying: bool,
     pub error: Option<String>,
+    pub retry: Option<Retry>,
+    pub requested_cursor: Option<String>,
 }
 
 impl State {
@@ -37,6 +45,8 @@ impl State {
         self.cursor = None;
         self.loading = true;
         self.error = None;
+        self.retry = None;
+        self.requested_cursor = None;
         self.generation
     }
 
@@ -51,9 +61,11 @@ impl State {
                 self.cursor = page.cursor;
                 self.selected = 0;
                 self.error = None;
+                self.retry = None;
             }
             Err(error) => {
                 self.error = Some(format!("{error:#}"));
+                self.retry = Some(Retry::Search(self.requested_cursor.clone()));
             }
         }
         true
@@ -85,6 +97,12 @@ impl State {
         };
     }
 
+    pub fn fail_copy(&mut self, error: anyhow::Error) {
+        self.copying = false;
+        self.error = Some(format!("{error:#}"));
+        self.retry = Some(Retry::Copy);
+    }
+
     pub fn begin_copy(&mut self) -> Option<Gif> {
         if self.copying {
             return None;
@@ -92,6 +110,7 @@ impl State {
         let gif = self.items.get(self.selected)?.clone();
         self.copying = true;
         self.error = None;
+        self.retry = None;
         Some(gif)
     }
 }
@@ -250,6 +269,20 @@ mod tests {
     }
 
     #[test]
+    fn failed_pagination_keeps_retry_cursor_until_query_changes() {
+        let mut state = State {
+            generation: 1,
+            requested_cursor: Some("later+page".into()),
+            ..State::default()
+        };
+        state.accept_page(1, Err(anyhow::anyhow!("temporary failure")));
+        assert_eq!(state.retry, Some(Retry::Search(Some("later+page".into()))));
+        state.change_query("new query".into());
+        assert!(state.retry.is_none());
+        assert!(state.requested_cursor.is_none());
+    }
+
+    #[test]
     fn navigation_stays_in_bounds_and_does_not_wrap_rows() {
         let mut state = State {
             items: (0..6).map(gif).collect(),
@@ -287,8 +320,8 @@ mod tests {
                 cursor: None
             })
         ));
-        state.copying = false;
-        state.error = Some("download failed".into());
+        state.fail_copy(anyhow::anyhow!("download failed"));
+        assert_eq!(state.retry, Some(Retry::Copy));
         assert_eq!(state.begin_copy().unwrap().id, "1");
     }
 }
