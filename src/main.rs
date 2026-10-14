@@ -3,29 +3,35 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
-use gloob::cache;
+use gloob::{cache, config::Config, ui};
 
 const HELP: &str = "gloob
 
-usage: gloob copy <path>
+usage: gloob [--config <path>]
+       gloob copy <path>
 
-copy a local gif to the wayland clipboard and exit.
+search gifs, copy the selected gif, and exit.
+copy can also publish a local gif without opening the picker.
 ";
 
 fn run(mut args: impl Iterator<Item = OsString>) -> Result<()> {
-    match (args.next(), args.next(), args.next()) {
-        (Some(command), None, None) if command == "--help" || command == "-h" => {
+    match (args.next(), args.next(), args.next(), args.next()) {
+        (None, None, None, None) => ui::run(Config::load(None)?),
+        (Some(flag), Some(path), None, None) if flag == "--config" => {
+            ui::run(Config::load(Some(Path::new(&path)))?)
+        }
+        (Some(command), None, None, None) if command == "--help" || command == "-h" => {
             print!("{HELP}");
             Ok(())
         }
-        (Some(command), Some(path), None) if command == "copy" => {
+        (Some(command), Some(path), None, None) if command == "copy" => {
             if let Some(warning) = cache::copy_path(Path::new(&path))? {
                 eprintln!("gloob: {warning}");
             }
             println!("copied gif");
             Ok(())
         }
-        _ => bail!("usage: gloob copy <path>"),
+        _ => bail!("usage: gloob [--config <path>] | gloob copy <path>"),
     }
 }
 

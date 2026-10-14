@@ -1,27 +1,56 @@
 # gloob
 
-a small gif picker for wayland. currently just the clipboard slice: copy a local gif and exit.
+a small, single-shot gif picker for wayland. search gifjif, move through animated previews, copy the selected gif, and exit. no account, provider key, background gloob service, or automatic paste.
 
 ## requirements
 
-- rust and cargo with edition 2024 support
+- gtk4 and gtk4-layer-shell runtime libraries
 - wl-clipboard (`wl-copy`)
-- an active wayland session with clipboard support; initial target is sway
+- an active wayland session with layer-shell and clipboard support; initial target is sway
+- internet access for search and gif downloads
 
-no gtk dependencies yet. the picker ui comes later.
+building from source also requires rust/cargo with edition 2024 support, a c compiler, pkg-config, and gtk4/layer-shell development files. the build checks native libraries but never installs system packages.
+
+fedora source-build dependencies:
+
+```sh
+sudo dnf install rust cargo gcc pkgconf-pkg-config gtk4-devel gtk4-layer-shell-devel wl-clipboard
+```
+
+arch source-build dependencies:
+
+```sh
+sudo pacman -S rust base-devel gtk4 gtk4-layer-shell wl-clipboard
+```
+
+rustfmt and clippy are contributor checks, not dependencies for using gloob.
 
 ## build and use
 
 ```sh
 cargo build --locked
+./target/debug/gloob
+./target/debug/gloob --config /path/to/config.toml
 ./target/debug/gloob copy /path/to/reaction.gif
 ```
 
-the command copies a file reference, not a url or a still image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client; slack and discord compatibility is not yet verified.
+type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected original, then exits. escape closes without copying. mouse clicks also select and copy. the next-page button loads another bounded page; tab navigates controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
+
+previews load near the visible rows with four bounded workers, and only visible tiles animate. each preview retains at most 48 downsampled frames, preserving the total playback duration; selected originals are never re-encoded or resized. search is debounced, old search/preview results are discarded, and a separate copy worker prevents preview downloads from holding up selection. empty search uses the feed.
+
+the clipboard contains a file reference, not a url or a still image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client. real animated paste was confirmed on the initial sway setup, but the client was not recorded, so this is not a blanket slack/discord compatibility claim.
+
+launch hotkeys belong to the compositor. add a sway binding yourself, using your actual binary path:
+
+```text
+bindsym $mod+g exec /absolute/path/to/gloob
+```
+
+gloob does not edit compositor configs. a keybinding launches a fresh picker; no resident gloob process is needed.
 
 ## configuration
 
-picker keybindings use `$XDG_CONFIG_HOME/gloob/config.toml`, or `~/.config/gloob/config.toml` when xdg_config_home is unset, empty, or relative. missing default files use built-in defaults. an explicitly requested config must exist; symlinks are supported. the picker startup will accept `--config <path>`.
+picker keybindings use `$XDG_CONFIG_HOME/gloob/config.toml`, or `~/.config/gloob/config.toml` when xdg_config_home is unset, empty, or relative. missing default files use built-in defaults. an explicitly requested config must exist; symlinks are supported. use `--config <path>` to choose another file.
 
 see [`examples/config.toml`](examples/config.toml) for defaults. `[keybindings]` supports `move_left`, `move_down`, `move_up`, `move_right`, `select`, and `close`, each with a nonempty array of chords. override only what you need. default movement is ctrl+h/j/k/l; enter selects and escape closes. modifiers are ctrl, alt, and shift; named keys include arrows, enter, escape, tab, space, and plus. printable shortcuts require ctrl or alt so ordinary search typing remains available. unmodified navigation is limited to arrows. duplicate bindings and unknown fields are errors rather than silently ignored typos.
 
@@ -31,7 +60,7 @@ these are in-app bindings, not compositor hotkeys. there is no gui configuration
 
 gifjif search and media retrieval live in `src/provider.rs`. search uses `sort=top`, requests 24 results, and passes pagination cursors through unchanged. an empty query uses the feed. the provider is public and requires no account or api key; search text is sent directly to gifjif. see [gifjif's developer documentation](https://gifjif.com/developers).
 
-requests have connection and total timeouts, no automatic redirects or retries, and explicit byte limits: 2 mib for responses/previews and 25 mib for original gifs. media urls must use https on gifjif's domain. downloaded originals still go through the full gif validator before caching or copying. rate-limit errors preserve a numeric retry-after value when supplied.
+requests have connection and total timeouts, no automatic redirects or retries, and explicit byte limits: 2 mib for responses/previews and 25 mib for original gifs. media urls must use https on gifjif's domain. downloaded originals still go through the full gif validator before caching or copying. rate-limit errors preserve a numeric retry-after value when supplied. the picker caps its own search attempts at 40 per minute, below gifjif's documented 60 per-minute per-ip allowance; other sessions or clients on the same ip can still cause rate-limit errors. retry is explicit rather than an automatic loop.
 
 ## clipboard and cache
 
@@ -53,4 +82,4 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-tests use a fake clipboard helper and do not change your clipboard. real sway/client testing is separate: verify the mime offer and cached uri with `wl-paste --list-types` and `wl-paste --type text/uri-list`, then paste into the intended client after gloob exits.
+tests use a fake clipboard helper and do not change your clipboard. real sway/client testing is separate: launch the picker, type a query, verify animated previews and ctrl navigation, dismiss with escape, then launch again and select with enter. verify the mime offer and cached uri with `wl-paste --list-types` and `wl-paste --type text/uri-list`, then paste into the intended client after gloob exits.
