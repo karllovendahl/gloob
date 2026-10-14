@@ -1,0 +1,18 @@
+# optional: ~/.config/gloob/config.toml, or $xdg_config_home/gloob/config.toml
+# omitted actions keep their defaults; each provided list replaces one action.
+# keys are case-insensitive: ctrl, alt, shift, then a key separated by +.
+# named keys: left, down, up, right, enter, escape, tab, space, plus.
+# printable shortcuts require ctrl or alt so ordinary typing stays in search.
+# navigation without ctrl/alt only accepts arrows (including shift+arrows).
+# every action needs at least one key; no chord may appear more than once.
+
+[keybindings]
+move_left = ["ctrl+h"]
+move_down = ["ctrl+j"]
+move_up = ["ctrl+k"]
+move_right = ["ctrl+l"]
+select = ["enter"]
+close = ["escape"]
+
+# for arrow navigation, replace an action's list, for example:
+# move_left = ["ctrl+h", "left"]

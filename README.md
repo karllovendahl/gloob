@@ -19,6 +19,14 @@ cargo build --locked
 
 the command copies a file reference, not a url or a still image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client; slack and discord compatibility is not yet verified.
 
+## configuration
+
+picker keybindings use `$XDG_CONFIG_HOME/gloob/config.toml`, or `~/.config/gloob/config.toml` when xdg_config_home is unset, empty, or relative. missing default files use built-in defaults. an explicitly requested config must exist; symlinks are supported. the picker startup will accept `--config <path>`.
+
+see [`examples/config.toml`](examples/config.toml) for defaults. `[keybindings]` supports `move_left`, `move_down`, `move_up`, `move_right`, `select`, and `close`, each with a nonempty array of chords. override only what you need. default movement is ctrl+h/j/k/l; enter selects and escape closes. modifiers are ctrl, alt, and shift; named keys include arrows, enter, escape, tab, space, and plus. printable shortcuts require ctrl or alt so ordinary search typing remains available. unmodified navigation is limited to arrows. duplicate bindings and unknown fields are errors rather than silently ignored typos.
+
+these are in-app bindings, not compositor hotkeys. there is no gui configuration editor.
+
 ## provider
 
 gifjif search and media retrieval live in `src/provider.rs`. search uses `sort=top`, requests 24 results, and passes pagination cursors through unchanged. an empty query uses the feed. the provider is public and requires no account or api key; search text is sent directly to gifjif. see [gifjif's developer documentation](https://gifjif.com/developers).
