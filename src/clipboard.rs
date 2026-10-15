@@ -4,9 +4,9 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-use crate::media::CachedGif;
+use crate::media::CachedMedia;
 
-pub fn publish(asset: &CachedGif) -> Result<()> {
+pub fn publish(asset: &CachedMedia) -> Result<()> {
     let display = std::env::var_os("WAYLAND_DISPLAY");
     let runtime = std::env::var_os("XDG_RUNTIME_DIR");
     ensure!(

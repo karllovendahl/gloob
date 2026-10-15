@@ -7,6 +7,8 @@ use gloob::media::cache_gif;
 use tempfile::TempDir;
 use url::Url;
 
+mod common;
+
 fn gif_bytes() -> Vec<u8> {
     let mut bytes = Vec::new();
     {
@@ -23,6 +25,112 @@ fn gif_bytes() -> Vec<u8> {
         }
     }
     bytes
+}
+
+#[test]
+fn webp_copies_keep_original_bytes_and_detect_format_not_extension() {
+    let root = TempDir::new().unwrap();
+    let source = root.path().join("misleading.gif");
+    for bytes in [
+        common::animation(2, 1, 2),
+        common::still(2, 1, [20, 40, 60, 255]),
+    ] {
+        fs::write(&source, &bytes).unwrap();
+        let output = copy_command(
+            root.path(),
+            &source,
+            Some("#!/bin/sh\n/bin/cat > \"$CAPTURE/uri\"\n"),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let path = Url::parse(fs::read_to_string(root.path().join("uri")).unwrap().trim())
+            .unwrap()
+            .to_file_path()
+            .unwrap();
+        assert_eq!(path.extension().unwrap(), "webp");
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let cached = gloob::media::cache_bytes(&bytes, path.parent().unwrap()).unwrap();
+        assert_eq!(cached.path(), path);
+    }
+}
+
+#[test]
+fn rejects_bad_webp_before_cache_or_clipboard_publication() {
+    let root = TempDir::new().unwrap();
+    let bytes = common::animation(2, 1, 2);
+    let mut truncated = bytes[..bytes.len() - 2].to_vec();
+    let size = (truncated.len() - 8) as u32;
+    truncated[4..8].copy_from_slice(&size.to_le_bytes());
+    let mut corrupt_later = bytes.clone();
+    let last_image = corrupt_later
+        .windows(4)
+        .rposition(|tag| tag == b"VP8L")
+        .unwrap();
+    corrupt_later[last_image + 8] = 0;
+    let mut huge = bytes.clone();
+    huge[24..27].copy_from_slice(&common::u24(16_000));
+    huge[27..30].copy_from_slice(&common::u24(16_000));
+    for bytes in [
+        truncated,
+        corrupt_later,
+        huge,
+        common::animation(1, 1, 1_001),
+        common::animation(1024, 1024, 96),
+    ] {
+        let cache = root.path().join("cache");
+        assert!(gloob::media::cache_bytes(&bytes, &cache).is_err());
+        assert!(!cache.exists());
+    }
+}
+
+#[test]
+fn mixed_gif_and_webp_selections_share_ten_file_retention() {
+    let root = TempDir::new().unwrap();
+    let source = root.path().join("source");
+    let mut paths = Vec::new();
+    for index in 0..12u8 {
+        let bytes = if index % 2 == 0 {
+            common::still(1, 1, [index, 0, 0, 255])
+        } else {
+            let mut bytes = gif_bytes();
+            bytes.pop();
+            bytes.extend_from_slice(&[0x21, 0xfe, 1, index, 0, 0x3b]);
+            bytes
+        };
+        fs::write(&source, &bytes).unwrap();
+        let output = copy_command(
+            root.path(),
+            &source,
+            Some("#!/bin/sh\n/bin/cat > \"$CAPTURE/uri\"\n"),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        paths.push(
+            Url::parse(fs::read_to_string(root.path().join("uri")).unwrap().trim())
+                .unwrap()
+                .to_file_path()
+                .unwrap(),
+        );
+    }
+    assert!(!paths[0].exists() && !paths[1].exists());
+    assert!(paths[2..].iter().all(|path| path.exists()));
+    let index: Vec<String> = serde_json::from_slice(
+        &fs::read(paths[11].parent().unwrap().join(".recency.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(index.len(), 11);
+    assert_eq!(
+        index.iter().filter(|name| name.ends_with(".webp")).count(),
+        5
+    );
+    // the index includes the last evicted entry so interrupted pruning can be retried.
+    assert_eq!(paths[11].extension().unwrap(), "gif");
 }
 
 fn source(directory: &Path) -> std::path::PathBuf {
@@ -339,7 +447,7 @@ fn cleanup_failure_warns_but_copy_succeeds_and_preserves_the_file() {
     );
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("cleanup failed"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("copied gif"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("copied file"));
     let path = Url::parse(fs::read_to_string(root.path().join("uri")).unwrap().trim())
         .unwrap()
         .to_file_path()

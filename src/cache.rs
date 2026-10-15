@@ -17,7 +17,7 @@ pub fn copy_path(path: &Path) -> Result<Option<String>> {
 }
 
 pub fn copy_bytes(bytes: &[u8]) -> Result<Option<String>> {
-    media::validate_gif(bytes)?;
+    media::validate(bytes)?;
     let directory = media::cache_dir()?;
     fs::DirBuilder::new()
         .recursive(true)
@@ -44,9 +44,13 @@ pub fn copy_bytes(bytes: &[u8]) -> Result<Option<String>> {
 }
 
 fn owned_name(name: &str) -> bool {
-    name.len() == 68
-        && name.ends_with(".gif")
-        && name.as_bytes()[..64]
+    let Some((hash, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    hash.len() == 64
+        && matches!(extension, "gif" | "webp")
+        && hash
+            .as_bytes()
             .iter()
             .copied()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))

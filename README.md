@@ -32,6 +32,7 @@ cargo build --locked
 ./target/debug/gloob
 ./target/debug/gloob --config /path/to/config.toml
 ./target/debug/gloob copy /path/to/reaction.gif
+./target/debug/gloob copy /path/to/reaction.webp
 ```
 
 type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected original, then exits. escape closes without copying. mouse clicks also select and copy. ctrl+n loads the next bounded page when available; it is ignored while loading or copying. titles stay in tooltips and accessibility labels so the grid stays image-only. tab navigates the remaining controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
@@ -74,15 +75,15 @@ requests have connection and total timeouts, no automatic redirects or retries, 
 
 ## clipboard and cache
 
-validated gifs go in `$XDG_CACHE_HOME/gloob/gifs`, falling back to `~/.cache/gloob/gifs` when the variable is unset, empty, or relative. filenames use a sha256 content hash so moving or renaming a source does not create another cached copy.
+validated gif and webp files go in `$XDG_CACHE_HOME/gloob/gifs`, falling back to `~/.cache/gloob/gifs` when the variable is unset, empty, or relative. filenames use a sha256 content hash so moving or renaming a source does not create another cached copy.
 
 gloob hands a percent-encoded `file://` uri to `wl-copy` as `text/uri-list`. wl-copy forks a background clipboard owner, so gloob can exit without dropping the selection. the helper serves subsequent paste requests until the selection is replaced or the session ends. gloob itself does not stay running.
 
-the file must remain available because the clipboard refers to its path. do not clear the cache before pasting. after a successful copy, gloob retains the ten most recently selected gifs, using a separate atomic recency index so reselecting does not rewrite gif bytes. failed clipboard publication neither advances recency nor removes previous selections. cleanup keeps the newly selected file and ignores unrelated filenames and symlinks. concurrent gloob copies serialize publication and cleanup with a cache lock; cleanup failures warn without claiming the successful copy failed. deleting the original source does not remove the cached copy.
+the file must remain available because the clipboard refers to its path. do not clear the cache before pasting. after a successful copy, gloob retains the ten most recently selected files across both formats, using a separate atomic recency index so reselecting does not rewrite gif bytes. failed clipboard publication neither advances recency nor removes previous selections. cleanup keeps the newly selected file and ignores unrelated filenames and symlinks. concurrent gloob copies serialize publication and cleanup with a cache lock; cleanup failures warn without claiming the successful copy failed. deleting the original source does not remove the cached copy.
 
 this is a ten-file cache, not clipboard history. older file references can stop working after later selections evict them; the current selection remains available. previews never enter this cache.
 
-files are limited to 25 mib. validation decodes frames with bounded memory and total decoding work. complete frames are accepted without an lzw end code because some real-world gifs omit it. truncated pixel data, malformed frames, and files without a gif trailer are still rejected before publication. cache files are written atomically; an existing damaged asset produces an error rather than silently replacing a file another paste might be reading.
+files are limited to 25 mib. gif and webp formats are detected from content, not filenames, and cached with the matching extension. original bytes are never converted. webp validation checks container boundaries, canvas and embedded frame dimensions before decoding every frame; this also bounds codec allocations that are not covered by its own memory limit. existing gif cache entries remain valid. validation decodes frames with bounded memory and total decoding work. complete frames are accepted without an lzw end code because some real-world gifs omit it. truncated pixel data, malformed frames, and files without a gif trailer are still rejected before publication. cache files are written atomically; an existing damaged asset produces an error rather than silently replacing a file another paste might be reading.
 
 ## checks
 

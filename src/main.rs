@@ -11,7 +11,7 @@ usage: gloob [--config <path>]
        gloob copy <path>
 
 search gifs, copy the selected gif, and exit.
-copy can also publish a local gif without opening the picker.
+copy can also publish a local gif or webp without opening the picker.
 ";
 
 fn run(mut args: impl Iterator<Item = OsString>) -> Result<()> {
@@ -28,7 +28,7 @@ fn run(mut args: impl Iterator<Item = OsString>) -> Result<()> {
             if let Some(warning) = cache::copy_path(Path::new(&path))? {
                 eprintln!("gloob: {warning}");
             }
-            println!("copied gif");
+            println!("copied file");
             Ok(())
         }
         _ => bail!("usage: gloob [--config <path>] | gloob copy <path>"),

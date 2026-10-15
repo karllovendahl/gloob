@@ -12,11 +12,11 @@ const MAX_FRAME_PIXELS: u64 = 16_000_000;
 const MAX_TOTAL_PIXELS: usize = 100_000_000;
 const MAX_FRAMES: usize = 1_000;
 
-pub struct CachedGif {
+pub struct CachedMedia {
     path: PathBuf,
 }
 
-impl CachedGif {
+impl CachedMedia {
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -38,17 +38,13 @@ fn resolve_cache_dir(xdg: Option<OsString>, home: Option<OsString>) -> Result<Pa
     Ok(PathBuf::from(home).join(".cache/gloob/gifs"))
 }
 
-pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedGif> {
+pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedMedia> {
     let bytes = read_bounded(source)?;
     cache_bytes(&bytes, directory)
 }
 
-pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedGif> {
-    ensure!(
-        bytes.len() as u64 <= MAX_FILE_BYTES,
-        "gif exceeds the 25 mib size limit"
-    );
-    validate_gif(bytes)?;
+pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedMedia> {
+    let format = validate(bytes)?;
 
     DirBuilder::new()
         .recursive(true)
@@ -58,7 +54,11 @@ pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedGif> {
     let directory = directory
         .canonicalize()
         .context("could not resolve the gif cache")?;
-    let path = directory.join(format!("{:x}.gif", Sha256::digest(bytes)));
+    let path = directory.join(format!(
+        "{:x}.{}",
+        Sha256::digest(bytes),
+        format.extension()
+    ));
     let mut temporary =
         tempfile::NamedTempFile::new_in(&directory).context("could not create a cached gif")?;
     temporary
@@ -86,7 +86,7 @@ pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedGif> {
         Err(error) => return Err(error.error).context("could not publish the cached gif"),
     }
 
-    Ok(CachedGif { path })
+    Ok(CachedMedia { path })
 }
 
 pub(crate) fn read_bounded(path: &Path) -> Result<Vec<u8>> {
@@ -109,6 +109,44 @@ pub(crate) fn read_bounded(path: &Path) -> Result<Vec<u8>> {
         "gif exceeds the 25 mib size limit"
     );
     Ok(bytes)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Format {
+    Gif,
+    WebP,
+}
+
+impl Format {
+    pub(crate) fn detect(bytes: &[u8]) -> Result<Self> {
+        if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+            Ok(Self::Gif)
+        } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+            Ok(Self::WebP)
+        } else {
+            bail!("file is not a gif or webp");
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Gif => "gif",
+            Self::WebP => "webp",
+        }
+    }
+}
+
+pub(crate) fn validate(bytes: &[u8]) -> Result<Format> {
+    ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "media exceeds the 25 mib size limit"
+    );
+    let format = Format::detect(bytes)?;
+    match format {
+        Format::Gif => validate_gif(bytes)?,
+        Format::WebP => crate::webp::validate(bytes)?,
+    }
+    Ok(format)
 }
 
 pub(crate) fn validate_gif(bytes: &[u8]) -> Result<()> {
