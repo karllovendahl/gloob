@@ -17,7 +17,7 @@ pub fn copy_path(path: &Path) -> Result<Option<String>> {
 }
 
 pub fn copy_bytes(bytes: &[u8]) -> Result<Option<String>> {
-    media::validate(bytes)?;
+    let format = media::validate(bytes)?;
     let directory = media::cache_dir()?;
     fs::DirBuilder::new()
         .recursive(true)
@@ -33,7 +33,7 @@ pub fn copy_bytes(bytes: &[u8]) -> Result<Option<String>> {
         .context("could not open the cache lock")?;
     lock.lock_exclusive()
         .context("could not lock the gif cache")?;
-    let asset = media::cache_bytes(bytes, &directory)?;
+    let asset = media::cache_validated(bytes, &directory, format)?;
     clipboard::publish(&asset)?;
     let name = asset.path().file_name().unwrap().to_str().unwrap();
     let warning = record_selection(&directory, name)

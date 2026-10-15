@@ -45,7 +45,15 @@ pub fn cache_gif(source: &Path, directory: &Path) -> Result<CachedMedia> {
 
 pub fn cache_bytes(bytes: &[u8], directory: &Path) -> Result<CachedMedia> {
     let format = validate(bytes)?;
+    cache_validated(bytes, directory, format)
+}
 
+// callers must validate once before starting the clipboard/cache transaction.
+pub(crate) fn cache_validated(
+    bytes: &[u8],
+    directory: &Path,
+    format: Format,
+) -> Result<CachedMedia> {
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
