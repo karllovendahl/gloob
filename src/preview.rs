@@ -15,7 +15,7 @@ pub struct Animation {
 
 fn decoder(bytes: &[u8]) -> Result<gif::Decoder<&[u8]>> {
     ensure!(
-        bytes.len() <= 2 * 1024 * 1024,
+        bytes.len() <= 25 * 1024 * 1024,
         "preview exceeds the file limit"
     );
     ensure!(
@@ -29,6 +29,85 @@ fn decoder(bytes: &[u8]) -> Result<gif::Decoder<&[u8]>> {
 }
 
 pub fn decode(bytes: &[u8]) -> Result<Animation> {
+    ensure!(
+        bytes.len() <= 25 * 1024 * 1024,
+        "preview exceeds the file limit"
+    );
+    match crate::media::Format::detect(bytes)? {
+        crate::media::Format::Gif => decode_gif(bytes),
+        crate::media::Format::WebP => decode_webp(bytes),
+    }
+}
+
+fn decode_webp(bytes: &[u8]) -> Result<Animation> {
+    let mut reader = crate::webp::decoder(
+        bytes,
+        crate::webp::Limits {
+            canvas_pixels: 1_000_000,
+            total_pixels: 40_000_000,
+            frames: 500,
+        },
+    )?;
+    if reader.is_animated() {
+        // use a transparent canvas, including each frame's dispose-to-background operation.
+        reader.set_background_color([0; 4])?;
+    }
+    let (width, height) = reader.dimensions();
+    let count = reader.num_frames().max(1) as usize;
+    let step = count.div_ceil(48);
+    let scale = (160.0 / f64::from(width))
+        .min(120.0 / f64::from(height))
+        .min(1.0);
+    let target_width = ((f64::from(width) * scale) as usize).max(1);
+    let target_height = ((f64::from(height) * scale) as usize).max(1);
+    let channels = if reader.has_alpha() { 4 } else { 3 };
+    let mut pixels = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .context("webp preview exceeds the output limit")?
+    ];
+    let mut frames: Vec<Frame> = Vec::new();
+    for index in 0..count {
+        let milliseconds = if reader.is_animated() {
+            reader
+                .read_frame(&mut pixels)
+                .context("invalid webp preview frame")?
+        } else {
+            reader
+                .read_image(&mut pixels)
+                .context("invalid webp preview")?;
+            100
+        };
+        let delay = Duration::from_millis(u64::from(milliseconds).max(20));
+        if index % step == 0 {
+            let mut rgba = Vec::with_capacity(target_width * target_height * 4);
+            for y in 0..target_height {
+                for x in 0..target_width {
+                    let offset = ((y * height as usize / target_height) * width as usize
+                        + x * width as usize / target_width)
+                        * channels;
+                    rgba.extend_from_slice(&pixels[offset..offset + 3]);
+                    rgba.push(if channels == 4 {
+                        pixels[offset + 3]
+                    } else {
+                        255
+                    });
+                }
+            }
+            frames.push(Frame { rgba, delay });
+        } else if let Some(previous) = frames.last_mut() {
+            previous.delay += delay;
+        }
+    }
+    Ok(Animation {
+        width: target_width,
+        height: target_height,
+        frames,
+    })
+}
+
+fn decode_gif(bytes: &[u8]) -> Result<Animation> {
     let mut reader = decoder(bytes)?;
     let width = usize::from(reader.width());
     let height = usize::from(reader.height());
@@ -91,6 +170,60 @@ pub fn decode(bytes: &[u8]) -> Result<Animation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_media as webp;
+
+    #[test]
+    fn webp_motion_timing_alpha_and_sampling_are_preserved() {
+        let animation = decode(&webp::animation(2, 1, 2)).unwrap();
+        assert_eq!((animation.width, animation.height), (2, 1));
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.frames[0].rgba, [255, 0, 0, 255].repeat(2));
+        assert_eq!(animation.frames[1].rgba, [0, 255, 0, 128].repeat(2));
+        assert_eq!(animation.frames[0].delay, Duration::from_millis(100));
+        assert_eq!(animation.frames[1].delay, Duration::from_millis(200));
+        let animation = decode(&webp::animation(2, 1, 100)).unwrap();
+        assert!(animation.frames.len() <= 48);
+        assert_eq!(
+            animation
+                .frames
+                .iter()
+                .map(|frame| frame.delay)
+                .sum::<Duration>(),
+            Duration::from_secs(15)
+        );
+        let still = decode(&webp::still(320, 240, [20, 40, 60, 255])).unwrap();
+        assert_eq!((still.width, still.height), (160, 120));
+        assert_eq!(still.frames[0].rgba, [20, 40, 60, 255].repeat(160 * 120));
+    }
+
+    #[test]
+    fn webp_subframes_blend_and_dispose_on_the_canvas() {
+        let mut chunks = webp::header(2, 1);
+        chunks.extend_from_slice(&webp::frame(2, 1, [255, 0, 0, 255], 100, 2));
+        // blend a half-transparent pixel over red, then clear that subrectangle.
+        chunks.extend_from_slice(&webp::frame(1, 1, [0, 255, 0, 128], 100, 1));
+        chunks.extend_from_slice(&webp::frame(1, 1, [0, 0, 255, 128], 100, 0));
+        let animation = decode(&webp::riff(&chunks)).unwrap();
+        assert_eq!(&animation.frames[1].rgba[4..], &[255, 0, 0, 255]);
+        assert_eq!(animation.frames[1].rgba[3], 255);
+        assert!(animation.frames[1].rgba[0] > 100 && animation.frames[1].rgba[1] > 100);
+        assert_eq!(&animation.frames[2].rgba[..4], &[0, 0, 255, 128]);
+        assert_eq!(&animation.frames[2].rgba[4..], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn webp_previews_reject_oversized_or_truncated_animations() {
+        for bytes in [
+            webp::animation(1, 1, 501),
+            webp::animation(1024, 1024, 1),
+            webp::animation(1000, 1000, 41),
+        ] {
+            assert!(decode(&bytes).is_err());
+        }
+        let mut bytes = webp::animation(2, 1, 2);
+        bytes.pop();
+        assert!(decode(&bytes).is_err());
+    }
 
     fn animation(frames: usize) -> Vec<u8> {
         sized_animation(2, 1, frames)
@@ -153,7 +286,7 @@ mod tests {
                 .contains("decoding limit")
         );
         assert!(
-            decode(&vec![0; 2 * 1024 * 1024 + 1])
+            decode(&vec![0; 25 * 1024 * 1024 + 1])
                 .err()
                 .unwrap()
                 .to_string()
