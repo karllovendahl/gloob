@@ -171,7 +171,11 @@ fn media_url(value: &str) -> Result<Url> {
     let url = Url::parse(value).context("gifsnap returned an invalid media url")?;
     let host = url.host_str().unwrap_or_default();
     ensure!(
-        url.scheme() == "https" && (host == "gifsnap.com" || host.ends_with(".gifsnap.com")),
+        url.scheme() == "https"
+            && (host == "gifsnap.com"
+                || host.ends_with(".gifsnap.com")
+                // gifsnap also returns direct upstream assets, not only mirrored media.
+                || host == "static.klipy.com"),
         "gifsnap returned an unexpected media host"
     );
     ensure!(
@@ -345,6 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_upstream_klipy_media_in_gifsnap_search_results() {
+        // gifsnap's aura text results point directly at this upstream cdn.
+        let url = "https://static.klipy.com/ii/4493325008d34b7bf8cd6813cd5c1619/2e/4e/ytAVDGdO1XP5rv2IU8.webp?token=keep%2Bme";
+        let mut body: serde_json::Value = serde_json::from_slice(&page()).unwrap();
+        body["data"][0]["url"] = url.into();
+        body["data"][0]["animated_preview"]["url"] = url.into();
+        body["data"][0]["animated_preview"]["mime_type"] = "image/webp".into();
+        let (api, _) = server("200 OK", "", serde_json::to_vec(&body).unwrap());
+        let item = api.search("aura text", None).unwrap().items.remove(0);
+        assert_eq!(item.download_url.as_str(), url);
+        assert_eq!(item.preview_url.unwrap().as_str(), url);
+        assert_eq!(item.source.as_deref(), Some("tenor"));
+    }
+
+    #[test]
     fn trending_and_last_page_are_distinct_from_search_failures() {
         let (api, request) = server(
             "200 OK",
@@ -397,6 +416,13 @@ mod tests {
             "http://gifsnap.com/a.gif",
             "https://evil.test/a.gif",
             "https://gifsnap.com.evil.test/a.gif",
+            "https://static.klipy.com.evil.test/a.webp",
+            "https://evil.static.klipy.com/a.webp",
+            "https://klipy.com/a.webp",
+            "http://static.klipy.com/a.webp",
+            "https://static.klipy.com:444/a.webp",
+            "https://user@static.klipy.com/a.webp",
+            "https://static.klipy.com/a.webp#fragment",
             "https://gifsnap.com:444/a.gif",
             "https://user@gifsnap.com/a.gif",
             "https://127.0.0.1/a.gif",
