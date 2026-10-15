@@ -62,8 +62,20 @@ pub(crate) fn decoder(bytes: &[u8], limits: Limits) -> Result<WebPDecoder<Cursor
                     "webp exceeds the decoding limit"
                 );
                 let mut images = 0;
+                let mut alpha = false;
                 chunks(&data[16..], |tag, data| {
-                    if let Some(dimensions) = image_dimensions(tag, data)? {
+                    if tag == b"ALPH" {
+                        ensure!(!alpha && images == 0, "invalid webp alpha chunk order");
+                        alpha = true;
+                    } else {
+                        // the codec's alpha path decodes the next chunk as vp8 regardless of tag.
+                        // only the two specified frame layouts may reach that decoder.
+                        ensure!(
+                            tag == b"VP8 " || (!alpha && tag == b"VP8L"),
+                            "unsupported webp frame chunk"
+                        );
+                        ensure!(images == 0, "webp frame must contain one image");
+                        let dimensions = image_dimensions(tag, data)?.unwrap();
                         ensure!(
                             dimensions == frame,
                             "webp frame dimensions do not match its bitstream"
@@ -201,18 +213,47 @@ mod tests {
     }
 
     #[test]
+    fn rejects_alpha_frames_with_hidden_unchecked_bitstreams() {
+        let mut frame = vec![0; 16];
+        frame.extend_from_slice(&fixtures::chunk(b"ALPH", &[0, 255]));
+        frame.extend_from_slice(&fixtures::chunk(
+            b"JUNK",
+            &[0, 0, 0, 0x9d, 1, 0x2a, 255, 63, 255, 63],
+        ));
+        let valid = fixtures::still(1, 1, [1, 2, 3, 255]);
+        frame.extend_from_slice(&valid[12..]);
+        for prefix in [Vec::new(), fixtures::frame(1, 1, [1, 2, 3, 255], 100, 2)] {
+            let mut chunks = fixtures::header(1, 1);
+            chunks.extend_from_slice(&prefix);
+            chunks.extend_from_slice(&fixtures::chunk(b"ANMF", &frame));
+            // inspect only the header: the unchecked payload must never reach pixel allocation.
+            let result = decoder(&fixtures::riff(&chunks), COPY_LIMITS).map(|_| ());
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unsupported webp frame chunk")
+            );
+        }
+    }
+
+    #[test]
     fn rejects_corrupt_compressed_data_and_container_lengths() {
         let mut chunks = fixtures::header(2, 1);
         chunks.extend_from_slice(&fixtures::frame(2, 1, [1, 2, 3, 255], 100, 2));
         let mut second = fixtures::frame(2, 1, [4, 5, 6, 255], 100, 2);
         // keep the bitstream header intact but remove the compressed pixel data.
         second.truncate(8 + 16 + 8 + 5);
+        second.push(0);
         let size = (second.len() - 8) as u32;
         second[4..8].copy_from_slice(&size.to_le_bytes());
         second[28..32].copy_from_slice(&5u32.to_le_bytes());
-        second.push(0);
         chunks.extend_from_slice(&second);
-        assert!(validate(&fixtures::riff(&chunks)).is_err());
+        let error = validate(&fixtures::riff(&chunks)).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid webp frame"),
+            "{error:#}"
+        );
         let mut still = fixtures::still(2, 1, [0, 0, 0, 255]);
         still.push(0);
         assert!(

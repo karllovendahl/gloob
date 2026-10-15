@@ -58,7 +58,7 @@ fn webp_copies_keep_original_bytes_and_detect_format_not_extension() {
 }
 
 #[test]
-fn rejects_bad_webp_before_cache_or_clipboard_publication() {
+fn rejects_bad_webp_before_cache_creation() {
     let root = TempDir::new().unwrap();
     let bytes = common::animation(2, 1, 2);
     let mut truncated = bytes[..bytes.len() - 2].to_vec();
@@ -83,6 +83,43 @@ fn rejects_bad_webp_before_cache_or_clipboard_publication() {
         let cache = root.path().join("cache");
         assert!(gloob::media::cache_bytes(&bytes, &cache).is_err());
         assert!(!cache.exists());
+    }
+}
+
+#[test]
+fn invalid_media_cannot_publish_or_change_existing_cache_state() {
+    let root = TempDir::new().unwrap();
+    let source = source(root.path());
+    let helper = Some("#!/bin/sh\n/bin/cat > \"$CAPTURE/uri\"\n");
+    assert!(copy_command(root.path(), &source, helper).status.success());
+    let directory = root.path().join("cache space ü #/gloob/gifs");
+    let snapshot = || {
+        let mut files: Vec<_> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let before = snapshot();
+    fs::remove_file(root.path().join("uri")).unwrap();
+    let mut gif = gif_bytes();
+    gif.pop();
+    let mut webp = common::animation(2, 1, 2);
+    webp.truncate(webp.len() - 2);
+    for bytes in [gif, webp] {
+        fs::write(&source, &bytes).unwrap();
+        let output = copy_command(root.path(), &source, helper);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(
+            !root.path().join("uri").exists(),
+            "invalid media reached the clipboard helper"
+        );
+        assert_eq!(snapshot(), before);
     }
 }
 

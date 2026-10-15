@@ -119,7 +119,11 @@ impl GifSnap {
                 })
                 .and_then(|preview| media_url(&preview.url).ok());
             let mut page_url = self.base.join("api/v1/gifs/")?;
-            page_url.path_segments_mut().unwrap().push(&item.id);
+            page_url
+                .path_segments_mut()
+                .unwrap()
+                .pop_if_empty()
+                .push(&item.id);
             items.push(Gif {
                 id: item.id,
                 title: if item.title.trim().is_empty() {
@@ -311,6 +315,7 @@ mod tests {
         let (api, request) = server("200 OK", "", page());
         let page = api.search(" hello & ü ", None).unwrap();
         assert_eq!(page.items[0].id, "one");
+        assert_eq!(page.items[0].page_url.path(), "/api/v1/gifs/one");
         assert_eq!(page.cursor.as_deref(), Some("2"));
         assert_eq!(
             page.items[0].download_url.as_str(),
@@ -462,6 +467,27 @@ mod tests {
         }
         let (api, _) = server("200 OK", "", b"<html>".to_vec());
         assert!(api.media(&api.base.join("asset").unwrap(), 100).is_err());
+    }
+
+    #[test]
+    fn successful_small_animation_does_not_download_full_asset() {
+        let bytes = crate::test_media::animation(2, 1, 2);
+        let (api, request) = server("200 OK", "", bytes);
+        let gif = Gif {
+            id: "one".into(),
+            title: "hello".into(),
+            page_url: api.base.clone(),
+            preview_url: Some(api.base.join("small").unwrap()),
+            download_url: api.base.join("full").unwrap(),
+            source: None,
+            content_id: None,
+        };
+        let animation = crate::app::load_preview(&api, &gif).unwrap();
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.frames[0].rgba, [255, 0, 0, 255].repeat(2));
+        // this one-response server closes its listener: an unwanted /full fetch cannot succeed.
+        assert!(request.recv().unwrap().starts_with("GET /small "));
+        assert!(request.try_recv().is_err());
     }
 
     #[test]
