@@ -11,7 +11,7 @@ use crate::{
     cache,
     config::Action,
     preview::{self, Animation},
-    provider::{Gif, GifJif, Page},
+    provider::{Gif, GifSnap, Page},
 };
 
 pub const COLUMNS: usize = 4;
@@ -143,7 +143,7 @@ pub struct Workers {
 
 impl Workers {
     pub fn new() -> Result<Self> {
-        let api = GifJif::new()?;
+        let api = GifSnap::new()?;
         let (send, messages) = mpsc::channel();
         let (jobs, receive) = mpsc::sync_channel::<Job>(32);
         let receive = Arc::new(Mutex::new(receive));
@@ -169,11 +169,9 @@ impl Workers {
                         Job::Search(id, query, cursor) => {
                             Message::Page(id, api.search(&query, cursor.as_deref()))
                         }
-                        Job::Preview(id, index, gif) => Message::Preview(
-                            id,
-                            index,
-                            api.preview(&gif).and_then(|bytes| preview::decode(&bytes)),
-                        ),
+                        Job::Preview(id, index, gif) => {
+                            Message::Preview(id, index, load_preview(&api, &gif))
+                        }
                     };
                     if generation.load(Ordering::Relaxed) == expected && send.send(message).is_err()
                     {
@@ -207,7 +205,7 @@ impl Workers {
     }
 
     pub fn search(&self, generation: u64, query: String, cursor: Option<String>) -> Result<()> {
-        // keep a margin under the shared per-ip allowance; do not retry or silently queue rate-limited searches.
+        // this is our per-process safety policy, not a promised gifsnap quota. do not silently queue retries.
         let mut times = self.api_times.lock().unwrap();
         let now = Instant::now();
         times.retain(|time| now.duration_since(*time) < Duration::from_secs(60));
@@ -235,19 +233,30 @@ impl Workers {
     }
 }
 
+pub(crate) fn load_preview(api: &GifSnap, gif: &Gif) -> Result<Animation> {
+    if gif.preview_url.is_some()
+        && let Ok(animation) = api.preview(gif).and_then(|bytes| preview::decode(&bytes))
+    {
+        return Ok(animation);
+    }
+    api.download(gif).and_then(|bytes| preview::decode(&bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use url::Url;
 
     fn gif(index: usize) -> Gif {
-        let url = Url::parse("https://gifjif.com/a.gif").unwrap();
+        let url = Url::parse("https://media.gifsnap.com/a.gif").unwrap();
         Gif {
             id: index.to_string(),
             title: String::new(),
             page_url: url.clone(),
-            preview_url: url.clone(),
+            preview_url: None,
             download_url: url,
+            source: None,
+            content_id: None,
         }
     }
 

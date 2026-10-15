@@ -307,7 +307,7 @@ impl Picker {
 
     fn update_status(&self) {
         let text = if self.state.copying {
-            "copying gif…".to_owned()
+            "downloading and copying…".to_owned()
         } else if let Some(error) = &self.state.error {
             error.clone()
         } else if self.state.loading {
@@ -315,7 +315,7 @@ impl Picker {
         } else if self.state.items.is_empty() {
             "no gifs found".to_owned()
         } else {
-            format!("{} gifs · gifjif", self.state.items.len())
+            format!("{} gifs · powered by gifsnap", self.state.items.len())
         };
         self.status.set_text(&text);
         self.retry

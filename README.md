@@ -1,6 +1,6 @@
 # gloob
 
-a small, single-shot gif picker for wayland. search gifjif, move through animated previews, copy the selected gif, and exit. no account, provider key, background gloob service, or automatic paste.
+a small, single-shot gif picker for wayland. search gifsnap, move through animated gif and webp previews, copy the selected file, and exit. no account, provider key, background gloob service, or automatic paste.
 
 ## requirements
 
@@ -35,11 +35,11 @@ cargo build --locked
 ./target/debug/gloob copy /path/to/reaction.webp
 ```
 
-type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected original, then exits. escape closes without copying. mouse clicks also select and copy. ctrl+n loads the next bounded page when available; it is ignored while loading or copying. titles stay in tooltips and accessibility labels so the grid stays image-only. tab navigates the remaining controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
+type into the focused search field. ctrl+h/j/k/l moves left/down/up/right; enter downloads and copies the selected full asset in its original gif or webp format, then exits. escape closes without copying. mouse clicks also select and copy. ctrl+n loads the next bounded page when available; it is ignored while loading or copying. titles stay in tooltips and accessibility labels so the grid stays image-only. tab navigates the remaining controls. copy failures stay visible so you can retry with enter. once copying starts, close/escape waits for its result to avoid claiming a cancelled copy while the clipboard operation completes.
 
 gif and webp previews load near the visible rows with four bounded workers, and only visible tiles animate. previews are limited to 25 mib, one million canvas pixels, 500 frames and 40 million canvas pixels of decoding work; only small sampled rgba frames remain in memory. each preview retains at most 48 downsampled frames, preserving the total playback duration; selected originals are never re-encoded or resized. search is debounced, old search/preview results are discarded, and a separate copy worker prevents preview downloads from holding up selection. empty search uses the feed.
 
-the clipboard contains a file reference, not a url or a still image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client. real animated paste was confirmed on the initial sway setup, but the client was not recorded, so this is not a blanket slack/discord compatibility claim.
+the clipboard contains a file reference, not a web link or flattened image. paste manually into a file-aware client using ctrl+v. whether that becomes an animated attachment depends on the client and format; gif support does not imply animated webp support. real animated gif paste was confirmed on the initial sway setup, but the client was not recorded. animated webp paste compatibility needs separate checking in the intended app. gloob never disguises a webp as a gif or converts it.
 
 launch hotkeys belong to the compositor. add a sway binding yourself, using your actual binary path:
 
@@ -69,9 +69,11 @@ background_opacity = 0.95
 
 ## provider
 
-gifjif search and media retrieval live in `src/provider.rs`. search uses `sort=top`, requests 24 results, and passes pagination cursors through unchanged. an empty query uses the feed. the provider is public and requires no account or api key; search text is sent directly to gifjif. see [gifjif's developer documentation](https://gifjif.com/developers).
+gifsnap search and media retrieval live in `src/provider.rs`. the client uses the rest api directly, requests 24 results, and follows `pagination.next_page`; an empty query uses trending. the public api currently requires no account or key. search text and download requests are sent directly to gifsnap. see [gifsnap's rest documentation](https://gifsnap.com/docs#rest).
 
-requests have connection and total timeouts, no automatic redirects or retries, and explicit byte limits: 2 mib for responses/previews and 25 mib for original gifs. media urls must use https on gifjif's domain. downloaded originals still go through the full gif validator before caching or copying. rate-limit errors preserve a numeric retry-after value when supplied. the picker caps its own search attempts at 40 per minute, below gifjif's documented 60 per-minute per-ip allowance; other sessions or clients on the same ip can still cause rate-limit errors. retry is explicit rather than an automatic loop.
+supported `animated_preview` images are used when supplied, with a 512 kib download cap. missing, unsupported, failed or undecodable small previews fall back to the full selected asset within the preview decode limits. `preview_url` can be static and is not treated as an animation. full-asset fallback increases browsing bandwidth when small animations are unavailable; previews never enter the persistent selection cache. gif and webp results remain available without conversion. selected downloads preserve the returned full url, bytes and format, not an assumed upstream resolution.
+
+requests have 5-second connection and 15-second total timeouts, no automatic redirects or retries, and explicit byte limits: 2 mib for api responses and 25 mib for full media. media urls must use https on gifsnap's domain; unexpected external hosts, credentials and custom ports are rejected. downloaded files go through full gif or webp validation before caching or copying. rate-limit errors preserve a numeric retry-after value when supplied. the picker caps its own search attempts at 40 per minute per process. that is a gloob safety policy, not a published gifsnap quota: the service provides no numeric rate-limit or unlimited-capacity promise. retry is explicit rather than an automatic loop.
 
 ## clipboard and cache
 
