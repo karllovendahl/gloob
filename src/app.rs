@@ -34,6 +34,7 @@ pub struct State {
     pub error: Option<String>,
     pub retry: Option<Retry>,
     pub requested_cursor: Option<String>,
+    automatic_more: bool,
 }
 
 impl State {
@@ -47,28 +48,68 @@ impl State {
         self.error = None;
         self.retry = None;
         self.requested_cursor = None;
+        self.automatic_more = false;
         self.generation
     }
 
+    pub fn begin_search(&mut self, cursor: Option<String>) -> bool {
+        if self.copying || (self.loading && cursor.is_some()) {
+            return false;
+        }
+        if cursor.is_none() {
+            self.generation += 1;
+            self.items.clear();
+            self.selected = 0;
+            self.cursor = None;
+            self.automatic_more = false;
+        }
+        self.loading = true;
+        self.requested_cursor = cursor;
+        self.error = None;
+        self.retry = None;
+        true
+    }
+
     pub fn accept_page(&mut self, generation: u64, result: Result<Page>) -> bool {
-        if generation != self.generation || self.copying {
+        if generation != self.generation || !self.loading {
             return false;
         }
         self.loading = false;
+        // a late page must not replace a failed copy's message or retry action.
+        let copy_error = self.retry == Some(Retry::Copy);
         match result {
             Ok(page) => {
-                self.items = page.items;
+                let mut ids: std::collections::HashSet<_> =
+                    self.items.iter().map(|item| item.id.clone()).collect();
+                let before = self.items.len();
+                self.items.extend(
+                    page.items
+                        .into_iter()
+                        .filter(|item| ids.insert(item.id.clone())),
+                );
                 self.cursor = page.cursor;
-                self.selected = 0;
-                self.error = None;
-                self.retry = None;
+                self.automatic_more = self.items.len() > before;
+                if !copy_error {
+                    self.error = None;
+                    self.retry = None;
+                }
             }
             Err(error) => {
-                self.error = Some(format!("{error:#}"));
-                self.retry = Some(Retry::Search(self.requested_cursor.clone()));
+                self.automatic_more = false;
+                if !copy_error {
+                    self.error = Some(format!("{error:#}"));
+                    self.retry = Some(Retry::Search(self.requested_cursor.clone()));
+                }
             }
         }
         true
+    }
+
+    pub fn automatic_page_cursor(&self) -> Option<String> {
+        if !self.automatic_more || self.retry.is_some() || self.items.is_empty() {
+            return None;
+        }
+        self.next_page_cursor()
     }
 
     pub fn navigate(&mut self, action: Action) {
@@ -410,6 +451,7 @@ mod tests {
         let mut state = State {
             generation: 1,
             requested_cursor: Some("later+page".into()),
+            loading: true,
             ..State::default()
         };
         state.accept_page(1, Err(anyhow::anyhow!("temporary failure")));
@@ -438,6 +480,156 @@ mod tests {
         state.selected = 3;
         state.navigate(Action::MoveRight);
         assert_eq!(state.selected, 3);
+    }
+
+    fn first_page() -> State {
+        let mut state = State::default();
+        assert!(state.begin_search(None));
+        assert!(state.accept_page(
+            state.generation,
+            Ok(Page {
+                items: (0..24).map(gif).collect(),
+                cursor: Some("2".into())
+            })
+        ));
+        state
+    }
+
+    #[test]
+    fn appending_preserves_selection_order_and_generation_without_duplicates() {
+        let mut state = first_page();
+        state.selected = 20;
+        let generation = state.generation;
+        assert!(state.begin_search(state.next_page_cursor()));
+        assert!(!state.begin_search(Some("2".into())));
+        assert!(state.automatic_page_cursor().is_none());
+        state.navigate(Action::MoveRight);
+        assert!(state.accept_page(
+            generation,
+            Ok(Page {
+                items: vec![gif(23), gif(24), gif(24), gif(25)],
+                cursor: Some("3".into())
+            })
+        ));
+        assert_eq!(state.generation, generation);
+        assert_eq!(state.selected, 21);
+        assert_eq!(
+            state
+                .items
+                .iter()
+                .map(|gif| gif.id.as_str())
+                .collect::<Vec<_>>(),
+            (0..26).map(|index| index.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(state.automatic_page_cursor().as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn failed_more_keeps_results_and_blocks_automatic_retries_until_explicit_success() {
+        let mut state = first_page();
+        state.selected = 21;
+        state.begin_search(Some("2".into()));
+        state.accept_page(state.generation, Err(anyhow::anyhow!("429 wait")));
+        assert_eq!(state.items.len(), 24);
+        assert_eq!(state.selected, 21);
+        assert!(state.automatic_page_cursor().is_none());
+        assert_eq!(state.retry, Some(Retry::Search(Some("2".into()))));
+        let Some(Retry::Search(cursor)) = state.retry.clone() else {
+            panic!()
+        };
+        assert!(state.begin_search(cursor));
+        state.accept_page(
+            state.generation,
+            Ok(Page {
+                items: vec![gif(24)],
+                cursor: None,
+            }),
+        );
+        assert_eq!(state.items.len(), 25);
+        assert!(state.retry.is_none() && state.next_page_cursor().is_none());
+    }
+
+    #[test]
+    fn empty_and_duplicate_only_pages_stop_automatic_fetching_but_allow_manual_more() {
+        for items in [vec![], vec![gif(0), gif(1)]] {
+            let mut state = first_page();
+            state.begin_search(Some("2".into()));
+            state.accept_page(
+                state.generation,
+                Ok(Page {
+                    items,
+                    cursor: Some("3".into()),
+                }),
+            );
+            assert_eq!(state.items.len(), 24);
+            assert!(state.automatic_page_cursor().is_none());
+            assert_eq!(state.next_page_cursor().as_deref(), Some("3"));
+        }
+    }
+
+    #[test]
+    fn new_query_clears_appended_results_and_rejects_old_completions() {
+        let mut state = first_page();
+        let old = state.generation;
+        state.begin_search(Some("2".into()));
+        state.accept_page(
+            old,
+            Ok(Page {
+                items: vec![gif(24)],
+                cursor: Some("3".into()),
+            }),
+        );
+        state.begin_search(Some("3".into()));
+        state.change_query("different".into());
+        assert!(state.items.is_empty() && state.cursor.is_none());
+        assert!(!state.accept_page(
+            old,
+            Ok(Page {
+                items: vec![gif(25)],
+                cursor: None
+            })
+        ));
+        assert!(!state.accept_page(old, Err(anyhow::anyhow!("late error"))));
+        assert!(state.items.is_empty() && state.error.is_none());
+    }
+
+    #[test]
+    fn late_more_during_copy_or_after_failure_does_not_break_selection_or_retry() {
+        for fail_before_page in [true, false] {
+            let mut state = first_page();
+            state.selected = 5;
+            state.begin_search(Some("2".into()));
+            assert_eq!(state.begin_copy().unwrap().id, "5");
+            if fail_before_page {
+                state.fail_copy(anyhow::anyhow!("copy failed"));
+            }
+            assert!(state.accept_page(
+                state.generation,
+                Ok(Page {
+                    items: vec![gif(24)],
+                    cursor: Some("3".into())
+                })
+            ));
+            assert!(!state.loading);
+            assert_eq!(state.items.len(), 25);
+            assert_eq!(state.selected, 5);
+            if !fail_before_page {
+                state.fail_copy(anyhow::anyhow!("copy failed"));
+            }
+            assert_eq!(state.retry, Some(Retry::Copy));
+            assert_eq!(state.error.as_deref(), Some("copy failed"));
+            assert!(state.automatic_page_cursor().is_none());
+            assert_eq!(state.begin_copy().unwrap().id, "5");
+        }
+        let mut state = first_page();
+        state.begin_search(Some("2".into()));
+        state.begin_copy();
+        state.fail_copy(anyhow::anyhow!("copy failed"));
+        state.accept_page(state.generation, Err(anyhow::anyhow!("page failed")));
+        assert!(!state.loading);
+        assert_eq!(state.retry, Some(Retry::Copy));
+        assert_eq!(state.error.as_deref(), Some("copy failed"));
+        assert_eq!(state.items.len(), 24);
     }
 
     #[test]

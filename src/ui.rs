@@ -10,6 +10,8 @@ use crate::app::{COLUMNS, Message, Retry, State, Workers};
 use crate::config::{Action, Appearance, Config, Key, KeyChord, Modifiers, Theme};
 use crate::previews::Previews;
 
+const TILE_HEIGHT: i32 = 132;
+
 struct Tile {
     button: gtk::Button,
     picture: gtk::Picture,
@@ -219,26 +221,20 @@ impl Picker {
     }
 
     fn start_search(&mut self, cursor: Option<String>) {
-        if self.state.copying {
+        if !self.state.begin_search(cursor.clone()) {
             return;
         }
         self.pending_search = None;
-        self.state.generation += 1;
-        self.state.loading = true;
-        self.state.error = None;
-        self.state.retry = None;
-        self.state.requested_cursor = cursor.clone();
-        self.state.items.clear();
-        self.state.cursor = None;
-        self.clear_tiles();
-        self.workers.invalidate(self.state.generation);
+        if cursor.is_none() {
+            self.clear_tiles();
+            self.scroll.vadjustment().set_value(0.0);
+            self.workers.invalidate(self.state.generation);
+        }
         if let Err(error) =
             self.workers
                 .search(self.state.generation, self.state.query.clone(), cursor)
         {
-            self.state.loading = false;
-            self.state.error = Some(error.to_string());
-            self.state.retry = Some(Retry::Search(self.state.requested_cursor.clone()));
+            self.state.accept_page(self.state.generation, Err(error));
         }
         self.update_status();
     }
@@ -257,7 +253,7 @@ impl Picker {
                 self.window.close();
             }
             Action::Select => {
-                if self.state.loading {
+                if self.state.loading && self.state.items.is_empty() {
                     return;
                 }
                 if let Some(gif) = self.state.begin_copy() {
@@ -303,7 +299,12 @@ impl Picker {
         } else if let Some(error) = &self.state.error {
             error.clone()
         } else if self.state.loading {
-            "loading gifs…".to_owned()
+            if self.state.items.is_empty() {
+                "loading gifs…"
+            } else {
+                "loading more gifs…"
+            }
+            .to_owned()
         } else if self.state.items.is_empty() {
             "no gifs found".to_owned()
         } else {
@@ -324,12 +325,12 @@ impl Picker {
 
     fn populate(picker: &Rc<RefCell<Self>>) {
         let mut this = picker.borrow_mut();
-        this.clear_tiles();
-        for index in 0..this.state.items.len() {
+        let first = this.tiles.len();
+        for index in first..this.state.items.len() {
             let gif = this.state.items[index].clone();
             let picture = gtk::Picture::builder()
                 .width_request(160)
-                .height_request(132)
+                .height_request(TILE_HEIGHT)
                 .can_shrink(true)
                 .build();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -371,10 +372,14 @@ impl Picker {
                 placeholder,
             });
         }
-        this.scroll.vadjustment().set_value(0.0);
+        if first == 0 {
+            this.scroll.vadjustment().set_value(0.0);
+            if !this.state.copying {
+                this.search.grab_focus();
+            }
+        }
         this.update_selection(false);
         this.update_status();
-        this.search.grab_focus();
     }
 
     fn tick(picker: &Rc<RefCell<Self>>) {
@@ -421,6 +426,19 @@ impl Picker {
         }
         let mut this = picker.borrow_mut();
         this.sync_previews();
+        let adjustment = this.scroll.vadjustment();
+        // newly appended widgets need a layout before their scroll extent is meaningful.
+        if near_end(
+            adjustment.value(),
+            adjustment.page_size(),
+            adjustment.upper(),
+            this.tiles
+                .last()
+                .map_or(0, |tile| tile.button.allocation().height()),
+        ) && let Some(cursor) = this.state.automatic_page_cursor()
+        {
+            this.start_search(Some(cursor));
+        }
         while let Ok(message) = this.workers.preview_messages.try_recv() {
             if message.generation != this.state.generation {
                 continue;
@@ -486,7 +504,7 @@ impl Picker {
             .enumerate()
             .filter_map(|(index, tile)| {
                 let allocation = tile.button.allocation();
-                if allocation.height() == 0 {
+                if allocation.height() < TILE_HEIGHT {
                     return None;
                 }
                 let start = f64::from(allocation.y());
@@ -510,6 +528,10 @@ impl Picker {
             self.tiles[index].placeholder.set_visible(true);
         }
     }
+}
+
+fn near_end(top: f64, height: f64, total: f64, last_tile_height: i32) -> bool {
+    last_tile_height >= TILE_HEIGHT && height > 0.0 && total > 0.0 && top + height >= total - 150.0
 }
 
 fn appearance_css(appearance: &Appearance) -> String {
@@ -587,7 +609,7 @@ fn binding_hint(config: &Config) -> String {
         movement.map(display).join("/")
     };
     format!(
-        "{movement} move · {} next · {} copy · {} close",
+        "{movement} move · {} more · {} copy · {} close",
         display(config.bindings(Action::NextPage)[0]),
         display(config.bindings(Action::Select)[0]),
         display(config.bindings(Action::Close)[0])
@@ -638,6 +660,16 @@ mod tests {
     }
 
     #[test]
+    fn only_a_laid_out_viewport_near_the_bottom_requests_more() {
+        assert!(!near_end(0.0, 400.0, 1000.0, 142));
+        assert!(!near_end(0.0, 0.0, 0.0, 0));
+        // gtk gives a new, unallocated button a small placeholder rectangle.
+        assert!(!near_end(0.0, 404.0, 404.0, 10));
+        assert!(near_end(450.0, 400.0, 1000.0, 142));
+        assert!(near_end(0.0, 400.0, 300.0, 142));
+    }
+
+    #[test]
     fn key_adapter_resolves_actions_without_consuming_normal_typing() {
         let config = Config::default();
         let ctrl = gdk::ModifierType::CONTROL_MASK;
@@ -660,10 +692,10 @@ mod tests {
         assert!(chord(gdk::Key::h, ctrl | gdk::ModifierType::SUPER_MASK).is_none());
         let custom = Config::from_toml("[keybindings]\nclose=['ctrl+q']").unwrap();
         assert!(binding_hint(&custom).contains("ctrl+q close"));
-        assert!(binding_hint(&custom).contains("ctrl+n next"));
+        assert!(binding_hint(&custom).contains("ctrl+n more"));
         assert!(binding_hint(&custom).contains("ctrl+h/j/k/l move"));
         let pagination = Config::from_toml("[keybindings]\nnext_page=['alt+n']").unwrap();
-        assert!(binding_hint(&pagination).contains("alt+n next"));
+        assert!(binding_hint(&pagination).contains("alt+n more"));
         assert_eq!(
             pagination.action_for(chord(gdk::Key::n, gdk::ModifierType::ALT_MASK).unwrap()),
             Some(Action::NextPage)
