@@ -660,6 +660,102 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an isolated wayland display; never opens on the user's desktop"]
+    fn evicting_a_tile_releases_its_gtk_texture_and_allows_reload() {
+        assert!(
+            std::env::var_os("GLOOB_HEADLESS_TEST").is_some(),
+            "run only with an isolated test compositor"
+        );
+        gdk::set_allowed_backends("wayland");
+        gtk::init().unwrap();
+        let app = gtk::Application::new(None::<&str>, gio::ApplicationFlags::NON_UNIQUE);
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let window = gtk::ApplicationWindow::builder()
+            .application(&app)
+            .default_width(760)
+            .default_height(530)
+            .build();
+        let grid = gtk::Grid::builder()
+            .column_spacing(10)
+            .row_spacing(10)
+            .build();
+        let scroll = gtk::ScrolledWindow::builder().child(&grid).build();
+        window.set_child(Some(&scroll));
+        let mut state = State::default();
+        state.generation = 1;
+        state.items = (0..24)
+            .map(|index| {
+                let url = url::Url::parse("https://media.gifsnap.com/test.gif").unwrap();
+                crate::provider::Gif {
+                    id: index.to_string(),
+                    title: "test".into(),
+                    page_url: url.clone(),
+                    preview_url: None,
+                    download_url: url,
+                    source: None,
+                    content_id: None,
+                }
+            })
+            .collect();
+        let mut previews = Previews::default();
+        previews.reset(1);
+        let picker = Rc::new(RefCell::new(Picker {
+            window: window.clone(),
+            grid,
+            scroll: scroll.clone(),
+            state,
+            previews,
+            workers: Workers::new().unwrap(),
+            search: gtk::SearchEntry::new(),
+            status: gtk::Label::new(None),
+            retry: gtk::Button::new(),
+            tiles: Vec::new(),
+            pending_search: None,
+            config: Config::default(),
+        }));
+        Picker::populate(&picker);
+        window.present();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (picker.borrow().tiles[23].button.allocation().height() < TILE_HEIGHT
+            || scroll.vadjustment().upper() <= scroll.vadjustment().page_size())
+            && Instant::now() < deadline
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        {
+            let mut picker = picker.borrow_mut();
+            picker.sync_previews();
+            assert!(picker.previews.needs(0));
+            picker.previews.requested(0);
+            let bytes = crate::test_media::animation(2, 1, 2);
+            picker
+                .previews
+                .complete(1, 0, crate::preview::decode(&bytes));
+            assert!(picker.previews.residents.contains_key(&0));
+            let pixels = glib::Bytes::from_static(&[255, 0, 0, 255, 255, 0, 0, 255]);
+            let texture = gdk::MemoryTexture::new(2, 1, gdk::MemoryFormat::R8g8b8a8, &pixels, 8);
+            picker.tiles[0].picture.set_paintable(Some(&texture));
+            picker.tiles[0].placeholder.set_visible(false);
+            assert!(picker.tiles[0].picture.paintable().is_some());
+            scroll
+                .vadjustment()
+                .set_value(scroll.vadjustment().upper() - scroll.vadjustment().page_size());
+            picker.sync_previews();
+            assert!(!picker.previews.residents.contains_key(&0));
+            assert!(picker.tiles[0].picture.paintable().is_none());
+            assert!(picker.tiles[0].placeholder.is_visible());
+            scroll.vadjustment().set_value(0.0);
+            picker.sync_previews();
+            assert!(picker.previews.needs(0));
+        }
+        window.close();
+    }
+
+    #[test]
     fn only_a_laid_out_viewport_near_the_bottom_requests_more() {
         assert!(!near_end(0.0, 400.0, 1000.0, 142));
         assert!(!near_end(0.0, 0.0, 0.0, 0));

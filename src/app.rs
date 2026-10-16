@@ -386,7 +386,7 @@ mod tests {
             assert!(workers.preview(1, index, asset.clone()));
         }
         // four ready deliveries plus four blocked workers: no unbounded decoded-message queue.
-        for _ in 0..READY_PREVIEWS + 4 {
+        for _ in 0..8 {
             observed.recv_timeout(Duration::from_secs(5)).unwrap();
         }
         assert!(observed.recv_timeout(Duration::from_millis(100)).is_err());
