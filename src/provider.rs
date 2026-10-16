@@ -39,7 +39,7 @@ impl GifSnap {
         Self::with_base(Url::parse("https://gifsnap.com/")?)
     }
 
-    fn with_base(base: Url) -> Result<Self> {
+    pub(crate) fn with_base(base: Url) -> Result<Self> {
         let client = Client::builder()
             .user_agent("gloob/0.1")
             .connect_timeout(Duration::from_secs(5))

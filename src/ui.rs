@@ -8,20 +8,12 @@ use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 
 use crate::app::{COLUMNS, Message, Retry, State, Workers};
 use crate::config::{Action, Appearance, Config, Key, KeyChord, Modifiers, Theme};
-use crate::preview::Animation;
-
-struct AnimatedTile {
-    picture: gtk::Picture,
-    animation: Animation,
-    frame: usize,
-    next_frame: Instant,
-}
+use crate::previews::Previews;
 
 struct Tile {
     button: gtk::Button,
     picture: gtk::Picture,
     placeholder: gtk::Label,
-    requested: bool,
 }
 
 struct Picker {
@@ -34,7 +26,7 @@ struct Picker {
     state: State,
     workers: Workers,
     tiles: Vec<Tile>,
-    animations: Vec<AnimatedTile>,
+    previews: Previews,
     pending_search: Option<Instant>,
     config: Config,
 }
@@ -148,7 +140,7 @@ impl Picker {
             state: State::default(),
             workers,
             tiles: Vec::new(),
-            animations: Vec::new(),
+            previews: Previews::default(),
             pending_search: None,
             config,
         }));
@@ -219,7 +211,7 @@ impl Picker {
     }
 
     fn clear_tiles(&mut self) {
-        self.animations.clear();
+        self.previews.reset(self.state.generation);
         self.tiles.clear();
         while let Some(child) = self.grid.first_child() {
             self.grid.remove(&child);
@@ -377,7 +369,6 @@ impl Picker {
                 button,
                 picture,
                 placeholder,
-                requested: false,
             });
         }
         this.scroll.vadjustment().set_value(0.0);
@@ -409,32 +400,6 @@ impl Picker {
                         Self::populate(picker);
                     }
                 }
-                Message::Preview(generation, index, result) => {
-                    let mut this = picker.borrow_mut();
-                    if generation != this.state.generation {
-                        continue;
-                    }
-                    let Some(tile) = this.tiles.get(index) else {
-                        continue;
-                    };
-                    match result {
-                        Ok(animation) => {
-                            tile.placeholder.set_visible(false);
-                            let picture = tile.picture.clone();
-                            this.animations.push(AnimatedTile {
-                                picture,
-                                animation,
-                                frame: 0,
-                                next_frame: Instant::now(),
-                            });
-                        }
-                        Err(error) => {
-                            tile.placeholder.set_text("preview unavailable");
-                            tile.picture
-                                .set_tooltip_text(Some(&format!("preview unavailable: {error:#}")));
-                        }
-                    }
-                }
                 Message::Copied(result) => {
                     let mut this = picker.borrow_mut();
                     match result {
@@ -455,30 +420,42 @@ impl Picker {
             }
         }
         let mut this = picker.borrow_mut();
-        let view_top = this.scroll.vadjustment().value();
-        let view_bottom = view_top + this.scroll.vadjustment().page_size();
-        for index in 0..this.tiles.len() {
-            let allocation = this.tiles[index].button.allocation();
-            let top = f64::from(allocation.y());
-            let near_view = top + f64::from(allocation.height()) >= view_top - 150.0
-                && top <= view_bottom + 150.0;
-            if near_view && !this.tiles[index].requested {
-                let gif = this.state.items[index].clone();
-                if this.workers.preview(this.state.generation, index, gif) {
-                    this.tiles[index].requested = true;
+        this.sync_previews();
+        while let Ok(message) = this.workers.preview_messages.try_recv() {
+            if message.generation != this.state.generation {
+                continue;
+            }
+            let index = message.index;
+            this.previews
+                .complete(message.generation, index, message.result);
+            if let Some(tile) = this.tiles.get(index) {
+                if this.previews.residents.contains_key(&index) {
+                    tile.placeholder.set_visible(false);
+                } else if let Some(error) = this.previews.failure(index) {
+                    tile.placeholder.set_text("preview unavailable");
+                    tile.picture
+                        .set_tooltip_text(Some(&format!("preview unavailable: {error}")));
                 }
             }
         }
-        for tile in &mut this.animations {
-            let Some(parent) = tile
-                .picture
-                .parent()
-                .and_then(|overlay| overlay.parent())
-                .and_then(|content| content.parent())
-            else {
-                continue;
-            };
-            let allocation = parent.allocation();
+        for index in this.previews.wanted().to_vec() {
+            if this.previews.needs(index) {
+                let gif = this.state.items[index].clone();
+                if this.workers.preview(this.state.generation, index, gif) {
+                    this.previews.requested(index);
+                    this.tiles[index].placeholder.set_text("loading…");
+                    this.tiles[index].placeholder.set_visible(true);
+                    this.tiles[index].picture.set_tooltip_text(None);
+                }
+            }
+        }
+        let view_top = this.scroll.vadjustment().value();
+        let view_bottom = view_top + this.scroll.vadjustment().page_size();
+        let Self {
+            tiles, previews, ..
+        } = &mut *this;
+        for (index, tile) in &mut previews.residents {
+            let allocation = tiles[*index].button.allocation();
             let top = f64::from(allocation.y());
             let visible = top + f64::from(allocation.height()) >= view_top && top <= view_bottom;
             if visible && Instant::now() >= tile.next_frame {
@@ -491,10 +468,46 @@ impl Picker {
                     &bytes,
                     tile.animation.width * 4,
                 );
-                tile.picture.set_paintable(Some(&texture));
+                tiles[*index].picture.set_paintable(Some(&texture));
                 tile.next_frame = Instant::now() + frame.delay;
                 tile.frame = (tile.frame + 1) % tile.animation.frames.len();
             }
+        }
+    }
+
+    fn sync_previews(&mut self) {
+        let adjustment = self.scroll.vadjustment();
+        let top = adjustment.value();
+        let bottom = top + adjustment.page_size();
+        let center = (top + bottom) / 2.0;
+        let mut candidates: Vec<_> = self
+            .tiles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tile)| {
+                let allocation = tile.button.allocation();
+                if allocation.height() == 0 {
+                    return None;
+                }
+                let start = f64::from(allocation.y());
+                let end = start + f64::from(allocation.height());
+                (end >= top - 150.0 && start <= bottom + 150.0).then_some((
+                    index,
+                    end >= top && start <= bottom,
+                    ((start + end) / 2.0 - center).abs(),
+                ))
+            })
+            .collect();
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.total_cmp(&b.2)));
+        for index in self
+            .previews
+            .set_wanted(candidates.into_iter().map(|item| item.0).collect())
+        {
+            self.tiles[index]
+                .picture
+                .set_paintable(None::<&gdk::Paintable>);
+            self.tiles[index].placeholder.set_text("loading…");
+            self.tiles[index].placeholder.set_visible(true);
         }
     }
 }

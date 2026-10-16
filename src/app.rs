@@ -124,9 +124,17 @@ impl State {
 
 pub enum Message {
     Page(u64, Result<Page>),
-    Preview(u64, usize, Result<Animation>),
     Copied(Result<Option<String>>),
 }
+
+pub struct PreviewMessage {
+    pub generation: u64,
+    pub index: usize,
+    pub result: Result<Animation>,
+}
+
+// keep decoded deliveries bounded separately from lightweight search/copy messages.
+const READY_PREVIEWS: usize = 4;
 
 enum Job {
     Search(u64, String, Option<String>),
@@ -137,14 +145,19 @@ pub struct Workers {
     jobs: mpsc::SyncSender<Job>,
     copy: mpsc::SyncSender<Gif>,
     pub messages: mpsc::Receiver<Message>,
+    pub preview_messages: mpsc::Receiver<PreviewMessage>,
     generation: Arc<AtomicU64>,
     api_times: Mutex<Vec<Instant>>,
 }
 
 impl Workers {
     pub fn new() -> Result<Self> {
-        let api = GifSnap::new()?;
+        Self::with_api(GifSnap::new()?)
+    }
+
+    fn with_api(api: GifSnap) -> Result<Self> {
         let (send, messages) = mpsc::channel();
+        let (previews, preview_messages) = mpsc::sync_channel(READY_PREVIEWS);
         let (jobs, receive) = mpsc::sync_channel::<Job>(32);
         let receive = Arc::new(Mutex::new(receive));
         let generation = Arc::new(AtomicU64::new(0));
@@ -153,6 +166,7 @@ impl Workers {
             let generation = generation.clone();
             let send = send.clone();
             let api = api.clone();
+            let previews = previews.clone();
             std::thread::spawn(move || {
                 loop {
                     let job = receive.lock().unwrap().recv();
@@ -170,7 +184,19 @@ impl Workers {
                             Message::Page(id, api.search(&query, cursor.as_deref()))
                         }
                         Job::Preview(id, index, gif) => {
-                            Message::Preview(id, index, load_preview(&api, &gif))
+                            let result = load_preview(&api, &gif);
+                            if generation.load(Ordering::Relaxed) == id
+                                && previews
+                                    .send(PreviewMessage {
+                                        generation: id,
+                                        index,
+                                        result,
+                                    })
+                                    .is_err()
+                            {
+                                break;
+                            }
+                            continue;
                         }
                     };
                     if generation.load(Ordering::Relaxed) == expected && send.send(message).is_err()
@@ -195,6 +221,7 @@ impl Workers {
             jobs,
             copy,
             messages,
+            preview_messages,
             generation,
             api_times: Mutex::new(Vec::new()),
         })
@@ -258,6 +285,84 @@ mod tests {
             source: None,
             content_id: None,
         }
+    }
+
+    #[test]
+    fn saturated_preview_delivery_stays_bounded_without_blocking_copy_results() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicBool;
+        let listener = TcpListener::bind("localhost:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = stop.clone();
+        let (requests, observed) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let bytes = crate::test_media::animation(2, 1, 2);
+            while !done.load(Ordering::Relaxed) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                let mut reader = BufReader::new(&stream);
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                let copy = first.contains("/copy ");
+                let body = if copy {
+                    b"invalid media".as_slice()
+                } else {
+                    &bytes
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+                if !copy {
+                    requests.send(()).unwrap();
+                }
+            }
+        });
+        let workers = Workers::with_api(GifSnap::with_base(base.clone()).unwrap()).unwrap();
+        workers.invalidate(1);
+        let mut asset = gif(0);
+        asset.download_url = base.join("preview").unwrap();
+        for index in 0..20 {
+            assert!(workers.preview(1, index, asset.clone()));
+        }
+        // four ready deliveries plus four blocked workers: no unbounded decoded-message queue.
+        for _ in 0..READY_PREVIEWS + 4 {
+            observed.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        assert!(observed.recv_timeout(Duration::from_millis(100)).is_err());
+        asset.download_url = base.join("copy").unwrap();
+        workers.copy(asset).unwrap();
+        // invalid bytes fail before cache/clipboard access, but the independent copy result arrives.
+        assert!(matches!(
+            workers
+                .messages
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            Message::Copied(Err(_))
+        ));
+        assert!(observed.try_recv().is_err());
+        drop(workers);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
     }
 
     #[test]
