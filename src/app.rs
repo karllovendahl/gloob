@@ -132,8 +132,11 @@ impl State {
                     (self.selected + 1).min(last)
                 }
             }
-            Action::MoveUp => self.selected.saturating_sub(COLUMNS),
-            Action::MoveDown => (self.selected + COLUMNS).min(last),
+            Action::MoveUp => self.selected.checked_sub(COLUMNS).unwrap_or(self.selected),
+            Action::MoveDown => {
+                let next = self.selected + COLUMNS;
+                if next <= last { next } else { self.selected }
+            }
             _ => self.selected,
         };
     }
@@ -480,6 +483,67 @@ mod tests {
         state.selected = 3;
         state.navigate(Action::MoveRight);
         assert_eq!(state.selected, 3);
+    }
+
+    #[test]
+    fn vertical_navigation_never_changes_columns_at_grid_edges() {
+        for count in 1..=28 {
+            let mut state = State {
+                items: (0..count).map(gif).collect(),
+                ..State::default()
+            };
+            for selected in 0..count {
+                state.selected = selected;
+                state.navigate(Action::MoveDown);
+                let expected = if selected + COLUMNS < count {
+                    selected + COLUMNS
+                } else {
+                    selected
+                };
+                assert_eq!(
+                    state.selected, expected,
+                    "down from {selected} with {count} items"
+                );
+                state.selected = selected;
+                state.navigate(Action::MoveUp);
+                let expected = if selected >= COLUMNS {
+                    selected - COLUMNS
+                } else {
+                    selected
+                };
+                assert_eq!(
+                    state.selected, expected,
+                    "up from {selected} with {count} items"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn down_waits_for_a_same_column_result_while_more_are_loading() {
+        let mut state = first_page();
+        state.selected = 20;
+        assert!(state.begin_search(Some("2".into())));
+        for _ in 0..3 {
+            state.navigate(Action::MoveDown);
+            assert_eq!(
+                state.selected, 20,
+                "down must not clamp to the bottom-right item"
+            );
+        }
+        state.accept_page(
+            state.generation,
+            Ok(Page {
+                items: (24..28).map(gif).collect(),
+                cursor: None,
+            }),
+        );
+        assert_eq!(
+            state.selected, 20,
+            "arrival must not move the selection automatically"
+        );
+        state.navigate(Action::MoveDown);
+        assert_eq!(state.selected, 24);
     }
 
     fn first_page() -> State {
